@@ -1022,6 +1022,21 @@ def new_workpaper():
             dummy_idr = 16000
             bands = [{"id": t["id"], "label": format_tier_label(t["min_usd"], t["max_usd"], dummy_idr)} for t in cur.fetchall()]
 
+            cur.execute("SELECT tier_id, entity_id FROM tier_entities")
+            tier_entities_map = {}
+            for row in cur.fetchall():
+                t = row["tier_id"]
+                tier_entities_map.setdefault(t, []).append(row["entity_id"])
+                
+            cur.execute("SELECT tier_id, site_id FROM tier_sites")
+            tier_sites_map = {}
+            for row in cur.fetchall():
+                t = row["tier_id"]
+                tier_sites_map.setdefault(t, []).append(row["site_id"])
+            
+            tier_mappings = {"entities": tier_entities_map, "sites": tier_sites_map}
+
+
             cur.execute("""
                 SELECT ua.role_id, ua.entity_id, ua.site_id, ua.full_name, e.code as entity_code, s.name as site_name
                 FROM user_assignments ua
@@ -1034,8 +1049,13 @@ def new_workpaper():
                 r = a["role_id"]
                 if r not in role_assignments:
                     role_assignments[r] = []
-                site_str = f" - {a['site_name']}" if a['site_name'] else ""
-                role_assignments[r].append(f"Assigned: {a['full_name']} ({a['entity_code']}{site_str})")
+                role_assignments[r].append({
+                    "full_name": a["full_name"],
+                    "entity_code": a["entity_code"],
+                    "site_name": a["site_name"],
+                    "entity_id": a["entity_id"],
+                    "site_id": a["site_id"]
+                })
 
             if request.method == "POST":
                 entity_id = request.form.get("entity_id")
@@ -1061,7 +1081,7 @@ def new_workpaper():
     finally:
         conn.close()
     
-    return render_template("workpaper_form.html", mode="create", unit=None, entities=entities, sites=sites, roles=roles, bands=bands, authority_rows=[], matrix={}, buyer_row=None, creator_row=None, ses={}, role_assignments=role_assignments)
+    return render_template("workpaper_form.html", mode="create", unit=None, entities=entities, sites=sites, roles=roles, bands=bands, authority_rows=[], matrix={}, buyer_row=None, creator_row=None, ses={}, role_assignments=role_assignments, tier_mappings=tier_mappings)
 
 @app.route("/workpapers/<code>/edit", methods=["GET", "POST"])
 def edit_workpaper(code):
@@ -1079,14 +1099,22 @@ def edit_workpaper(code):
             cur.execute("SELECT exchange_rate_idr FROM entities WHERE id = %s", (unit["entity_id"],))
             idr = cur.fetchone()["exchange_rate_idr"]
             
-            cur.execute("""
-                SELECT id, seq, min_usd, max_usd 
-                FROM amount_tiers a
-                WHERE EXISTS (SELECT 1 FROM tier_entities WHERE tier_id = a.id AND entity_id = %s)
-                  AND (%s IS NULL OR EXISTS (SELECT 1 FROM tier_sites WHERE tier_id = a.id AND site_id = %s))
-                ORDER BY seq
-            """, (unit["entity_id"], unit["site_id"], unit["site_id"]))
+            cur.execute("SELECT id, seq, min_usd, max_usd FROM amount_tiers ORDER BY seq")
             bands = [{"id": t["id"], "label": format_tier_label(t["min_usd"], t["max_usd"], idr)} for t in cur.fetchall()]
+
+            cur.execute("SELECT tier_id, entity_id FROM tier_entities")
+            tier_entities_map = {}
+            for row in cur.fetchall():
+                t = row["tier_id"]
+                tier_entities_map.setdefault(t, []).append(row["entity_id"])
+                
+            cur.execute("SELECT tier_id, site_id FROM tier_sites")
+            tier_sites_map = {}
+            for row in cur.fetchall():
+                t = row["tier_id"]
+                tier_sites_map.setdefault(t, []).append(row["site_id"])
+            
+            tier_mappings = {"entities": tier_entities_map, "sites": tier_sites_map}
 
             if request.method == "POST":
                 entity_id = request.form.get("entity_id")
@@ -1127,21 +1155,25 @@ def edit_workpaper(code):
                 FROM user_assignments ua
                 JOIN entities e ON ua.entity_id = e.id
                 LEFT JOIN sites s ON ua.site_id = s.id
-                WHERE ua.entity_id = %s AND (ua.site_id IS NULL OR ua.site_id = %s)
-            """, (unit["entity_id"], unit["site_id"]))
+            """)
             assignments = cur.fetchall()
             role_assignments = {}
             for a in assignments:
                 r = a["role_id"]
                 if r not in role_assignments:
                     role_assignments[r] = []
-                site_str = f" - {a['site_name']}" if a['site_name'] else ""
-                role_assignments[r].append(f"Assigned: {a['full_name']} ({a['entity_code']}{site_str})")
+                role_assignments[r].append({
+                    "full_name": a["full_name"],
+                    "entity_code": a["entity_code"],
+                    "site_name": a["site_name"],
+                    "entity_id": a["entity_id"],
+                    "site_id": a["site_id"]
+                })
             
     finally:
         conn.close()
     
-    return render_template("workpaper_form.html", mode="edit", unit=unit, entities=entities, sites=sites, roles=roles, bands=bands, authority_rows=authority_rows, matrix=matrix, buyer_row=buyer_row, creator_row=creator_row, ses=ses, role_assignments=role_assignments)
+    return render_template("workpaper_form.html", mode="edit", unit=unit, entities=entities, sites=sites, roles=roles, bands=bands, authority_rows=authority_rows, matrix=matrix, buyer_row=buyer_row, creator_row=creator_row, ses=ses, role_assignments=role_assignments, tier_mappings=tier_mappings)
 
 @app.route("/workpapers/<int:unit_id>/delete", methods=["POST"])
 def delete_workpaper(unit_id):

@@ -16,6 +16,27 @@
 {% endmacro %}
 {% block title %}{{ 'Buat' if mode == 'create' else 'Edit' }} Kertas Kerja{% endblock %}
 {% block content %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<style>
+  .select2-container .select2-selection--single {
+    height: 38px !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 0.375rem !important;
+    display: flex;
+    align-items: center;
+  }
+  .select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 36px !important;
+  }
+  .select2-container--default.select2-container--disabled .select2-selection--single {
+    background-color: #f3f4f6 !important;
+    cursor: not-allowed;
+  }
+</style>
+
 <div class="mb-4">
   <a href="{{ url_for('workpapers') }}" class="text-sm text-gray-500 hover:text-gray-900">&larr; Kembali ke daftar</a>
 </div>
@@ -79,7 +100,7 @@
           <th class="px-3 py-2 text-left font-medium w-48">Posisi (Label Khusus)</th>
           <th class="px-3 py-2 text-left font-medium w-48">Komentar</th>
           {% for b in bands %}
-            <th class="px-1 py-2 align-bottom h-52 w-16 border-x border-gray-200">
+            <th class="px-1 py-2 align-bottom h-52 w-16 border-x border-gray-200 band-col-{{ b.id }}">
               <div class="w-full flex justify-center pb-2">
                 <div class="[writing-mode:vertical-rl] rotate-180 text-left">
                   <div class="mb-2">
@@ -120,7 +141,7 @@
               {% set outer_loop_index = loop.index0 %}
               {% for b in bands %}
                 {% set req = matrix.get((r.id, b.id)) %}
-                <td class="p-2 text-center align-middle">
+                <td class="p-2 text-center align-middle band-col-{{ b.id }}">
                   <input type="checkbox" name="row_check_{{ outer_loop_index }}_{{ b.id }}" value="1" {% if req %}checked{% endif %} class="h-4 w-4 rounded border-gray-300">
                 </td>
               {% endfor %}
@@ -146,7 +167,7 @@
               <input type="text" name="row_comment[]" placeholder="Komentar opsional" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
             </td>
             {% for b in bands %}
-              <td class="p-2 text-center align-middle">
+              <td class="p-2 text-center align-middle band-col-{{ b.id }}">
                 <input type="checkbox" name="row_check_0_{{ b.id }}" value="1" class="h-4 w-4 rounded border-gray-300">
               </td>
             {% endfor %}
@@ -203,7 +224,7 @@
       <tbody>
         {% for b in bands %}
           {% set s = ses.get(b.id) if ses else None %}
-          <tr class="border-b hover:bg-gray-50">
+          <tr class="border-b hover:bg-gray-50 band-col-{{ b.id }}">
             <td class="p-3">
               <div class="mb-1">{{ render_band(b.label.usd, true) }}</div>
               <div>{{ render_band(b.label.idr, false) }}</div>
@@ -250,15 +271,95 @@
 
   function filterSites() {
     var entityOpt = entitySelect.options[entitySelect.selectedIndex];
-    var entityCode = entityOpt ? entityOpt.text.split(' - ')[0] : '';
+    var entityCode = entityOpt && entityOpt.value ? entityOpt.text.split(' - ')[0] : '';
     siteOptions.forEach(function (opt) {
       if (!opt.value) { opt.hidden = false; return; }
       opt.hidden = !!entityCode && opt.dataset.entity !== entityCode;
-      if(opt.hidden && opt.selected) siteSelect.value = "";
+      if(opt.hidden && opt.selected) {
+         siteSelect.value = "";
+         if ($(siteSelect).data('select2')) $(siteSelect).trigger('change.select2');
+      }
+    });
+    checkEntitySiteFilled();
+  }
+  
+  function checkEntitySiteFilled() {
+    var entityId = entitySelect.value;
+    var isSiteRequired = false;
+    
+    // Check if there are any valid sites for this entity
+    for (var i = 0; i < siteSelect.options.length; i++) {
+       if (siteSelect.options[i].value && !siteSelect.options[i].hidden) {
+           isSiteRequired = true;
+           break;
+       }
+    }
+    
+    var isFilled = false;
+    if (entityId) {
+        if (isSiteRequired) {
+            if (siteSelect.value) isFilled = true;
+        } else {
+            isFilled = true;
+        }
+    }
+    
+    // Enable/Disable role selects
+    document.querySelectorAll('select').forEach(function(selectEl) {
+        if (selectEl.name.includes('role') || selectEl.name.includes('ses_creator') || selectEl.name.includes('ses_approver')) {
+            $(selectEl).prop('disabled', !isFilled);
+        }
     });
   }
   entitySelect.addEventListener('change', filterSites);
+  
+  // Filter Bands Dynamically
+  var tierMappings = {{ tier_mappings | tojson | safe }};
+  function updateVisibleBands() {
+    var entityId = parseInt(entitySelect.value);
+    var siteId = siteSelect.value ? parseInt(siteSelect.value) : null;
+    
+    // Find valid bands
+    var validBandIds = [];
+    {% for b in bands %}
+      var bId = {{ b.id }};
+      var entityMatch = tierMappings.entities[bId] && tierMappings.entities[bId].includes(entityId);
+      var siteMatch = siteId === null || (tierMappings.sites[bId] && tierMappings.sites[bId].includes(siteId));
+      if (!entityId) entityMatch = true; // Show all if nothing selected
+      if (entityMatch && siteMatch) {
+        validBandIds.push(bId);
+      }
+    {% endfor %}
+    
+    // Hide or show elements with band-col class
+    {% for b in bands %}
+      var bId = {{ b.id }};
+      var els = document.querySelectorAll('.band-col-' + bId);
+      if (validBandIds.includes(bId)) {
+        els.forEach(function(e) { e.style.display = ''; });
+      } else {
+        els.forEach(function(e) { e.style.display = 'none'; });
+      }
+    {% endfor %}
+  }
+
+  entitySelect.addEventListener('change', updateVisibleBands);
+  siteSelect.addEventListener('change', updateVisibleBands);
+
+  $(siteSelect).on('change', function() {
+      checkEntitySiteFilled();
+  });
+  
+  // Initialize select2
+  function initSelect2() {
+    $('select').select2({ width: '100%' });
+  }
+
+  // Initial updates
   filterSites();
+  updateVisibleBands();
+  checkEntitySiteFilled();
+  initSelect2();
 
   // Dynamic Rows Logic
   var tbody = document.getElementById('matrixBody');
@@ -280,16 +381,33 @@
   addBtn.addEventListener('click', function() {
     var rows = tbody.querySelectorAll('.matrix-row');
     var lastRow = rows[rows.length - 1];
+    
+    // Destroy select2 before cloning to avoid cloning the select2 DOM elements
+    $(lastRow).find('select').select2('destroy');
+    
     var newRow = lastRow.cloneNode(true);
+    
+    // Re-init select2 on the old row
+    initSelect2();
+    
     // clear inputs
     newRow.querySelector('select').value = '';
     var textInputs = newRow.querySelectorAll('input[type="text"]');
     textInputs.forEach(function(inp) { inp.value = ''; });
     var checkboxes = newRow.querySelectorAll('input[type="checkbox"]');
     checkboxes.forEach(function(cb) { cb.checked = false; });
+    
+    var containers = newRow.querySelectorAll('.role-assignments-container');
+    containers.forEach(function(c) { c.innerHTML = ''; });
+    
     tbody.appendChild(newRow);
+    
+    // Init select2 on the new row
+    initSelect2();
+    
     updateRowNames();
     attachDelete();
+    checkEntitySiteFilled(); // Enforce disabled state if needed
   });
 
   function attachDelete() {
@@ -307,69 +425,79 @@
   }
   attachDelete();
   
-  // Custom Web Tooltip for Role assignments
-  var tooltip = document.createElement('div');
-  tooltip.className = 'fixed hidden z-[9999] max-w-sm bg-gray-900 text-white text-xs rounded-md shadow-xl p-3 pointer-events-none transition-opacity duration-150 border border-gray-700';
-  document.body.appendChild(tooltip);
-  
-  // Parse role assignments passed from python
+  // Dynamic Role Assignments Display
   var roleAssignments = {{ role_assignments | tojson | safe }};
-  
-  function renderTooltipContent(roleId) {
+
+  function renderAssignmentsHTML(roleId, roleName) {
+    if (!roleId) return '';
     var assignments = roleAssignments[roleId];
-    if (assignments && assignments.length > 0) {
-      var html = '<div class="font-semibold mb-1.5 text-gray-300 border-b border-gray-700 pb-1">Assigned Employees:</div><ul class="list-disc pl-4 space-y-1 text-gray-100">';
-      assignments.forEach(function(a) {
-         html += '<li>' + a + '</li>';
+    
+    // Filter by selected entity and site
+    var selectedEntityId = parseInt(document.getElementById('entity_id').value);
+    var selectedSiteId = document.getElementById('site_id').value ? parseInt(document.getElementById('site_id').value) : null;
+    
+    var filtered = assignments ? assignments.filter(function(a) {
+      if (selectedEntityId && a.entity_id !== selectedEntityId) return false;
+      if (selectedSiteId && a.site_id && a.site_id !== selectedSiteId) return false;
+      return true;
+    }) : [];
+
+    if (filtered.length > 0) {
+      var html = '<div class="mt-1.5 p-2 bg-gray-50 border border-gray-100 rounded-md shadow-sm text-xs">';
+      html += '<div class="text-red-600 font-semibold mb-1">' + roleName + '</div>';
+      html += '<ul class="list-disc pl-4 space-y-0.5">';
+      filtered.forEach(function(a) {
+        var siteStr = a.site_name ? ' - ' + a.site_name : '';
+        html += '<li>';
+        html += '<span class="text-green-600 font-medium">' + a.full_name + '</span> ';
+        html += '<span class="text-blue-600">(' + a.entity_code + siteStr + ')</span>';
+        html += '</li>';
       });
-      html += '</ul>';
+      html += '</ul></div>';
       return html;
     } else {
-      return '<div class="italic text-gray-400">Belum ada employee yang di-assign</div>';
+      return '<div class="mt-1.5 p-2 bg-gray-50 border border-gray-100 rounded-md shadow-sm text-xs text-gray-400 italic">Belum ada employee yang di-assign untuk Entity/Site ini</div>';
     }
   }
 
-  function positionTooltip(e, rect) {
-    // Basic positioning logic below select
-    var top = rect.bottom + 5;
-    var left = rect.left;
-    
-    // Ensure tooltip doesn't go off screen
-    tooltip.style.left = left + 'px';
-    tooltip.style.top = top + 'px';
-  }
-
-  document.addEventListener('mouseover', function(e) {
-    if (e.target.tagName === 'SELECT' && e.target.name.includes('role')) {
-      var roleId = e.target.value;
-      if (!roleId) {
-        tooltip.innerHTML = '<div class="text-gray-300">Pilih Role terlebih dahulu</div>';
+  function updateRoleAssignmentsDisplay(selectEl) {
+    if (selectEl.tagName === 'SELECT' && 
+        (selectEl.name.includes('role') || selectEl.name.includes('ses_creator') || selectEl.name.includes('ses_approver'))) {
+      
+      var container = selectEl.parentNode.querySelector('.role-assignments-container');
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'role-assignments-container';
+        selectEl.parentNode.appendChild(container);
+      }
+      
+      var roleId = selectEl.value;
+      if (roleId) {
+        var roleName = selectEl.options[selectEl.selectedIndex].text.trim();
+        container.innerHTML = renderAssignmentsHTML(roleId, roleName);
       } else {
-        tooltip.innerHTML = renderTooltipContent(roleId);
-      }
-      positionTooltip(e, e.target.getBoundingClientRect());
-      tooltip.classList.remove('hidden');
-    }
-  });
-
-  document.addEventListener('mouseout', function(e) {
-    if (e.target.tagName === 'SELECT' && e.target.name.includes('role')) {
-      tooltip.classList.add('hidden');
-    }
-  });
-
-  document.addEventListener('change', function(e) {
-    if (e.target.tagName === 'SELECT' && e.target.name.includes('role')) {
-      if (!tooltip.classList.contains('hidden')) {
-        var roleId = e.target.value;
-        if (!roleId) {
-          tooltip.innerHTML = '<div class="text-gray-300">Pilih Role terlebih dahulu</div>';
-        } else {
-          tooltip.innerHTML = renderTooltipContent(roleId);
-        }
+        container.innerHTML = '';
       }
     }
-  });
+  }
 
+  function updateAllRoleDisplays() {
+    document.querySelectorAll('select').forEach(function(selectEl) {
+      updateRoleAssignmentsDisplay(selectEl);
+    });
+  }
+
+  // Use jQuery for Select2 change events
+  $(document).on('change', 'select', function(e) {
+    if (e.target.id === 'entity_id' || e.target.id === 'site_id') {
+      updateAllRoleDisplays();
+    }
+    if (e.target.tagName === 'SELECT') {
+      updateRoleAssignmentsDisplay(e.target);
+    }
+  });
+  
+  // Make sure to also run for initial load after Select2 init
+  updateAllRoleDisplays();
 </script>
 {% endblock %}
