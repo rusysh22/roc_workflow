@@ -10,7 +10,8 @@ INSERT INTO entities (code, name) VALUES
   ('PGE',   'PGE'),
   ('MBN',   'PT Mitra Baruna Nusantara'),
   ('ISB',   'ISB'),
-  ('INDIS', 'INDIS');
+  ('INDIS', 'INDIS')
+ON CONFLICT (code) DO NOTHING;
 
 -- Sites
 -- Derived from the workbook's per-entity site tabs (e.g. "IMN-JKT", "IRB-SOR").
@@ -46,7 +47,8 @@ INSERT INTO sites (entity_id, name) VALUES
   ((SELECT id FROM entities WHERE code = 'MBN'),  'Bekasi'),
 
   ((SELECT id FROM entities WHERE code = 'ISB'),  'Jakarta'),
-  ((SELECT id FROM entities WHERE code = 'ISB'),  'Balikpapan');
+  ((SELECT id FROM entities WHERE code = 'ISB'),  'Balikpapan')
+ON CONFLICT (entity_id, name) DO NOTHING;
 
 -- Roles
 INSERT INTO roles (name, is_centralized) VALUES
@@ -60,7 +62,8 @@ INSERT INTO roles (name, is_centralized) VALUES
   ('Deputy Director', FALSE),
   ('Assignment Director', FALSE),
   ('Director', FALSE),
-  ('President Director', FALSE);
+  ('President Director', FALSE)
+ON CONFLICT (name) DO NOTHING;
 
 -- Purchasing-authority amount tiers (USD-denominated master scale, shared by
 -- every entity's Kertas Kerja; each entity's own exchange_rate_idr computes
@@ -71,4 +74,5 @@ INSERT INTO amount_tiers (seq, min_usd, max_usd) VALUES
   (2, 5000,    15000),
   (3, 15000,   80000),
   (4, 80000,   200000),
-  (5, 200000,  2000000);
+  (5, 200000,  2000000)
+ON CONFLICT (seq) DO NOTHING;
