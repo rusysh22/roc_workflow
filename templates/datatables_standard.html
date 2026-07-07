@@ -1,0 +1,112 @@
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<style>
+  .dataTables_wrapper .dataTables_length select { border: 1px solid #aaa; border-radius: 3px; padding: 4px; background-color: transparent; }
+  .dataTables_wrapper .dataTables_filter input { border: 1px solid #aaa; border-radius: 3px; padding: 4px; background-color: transparent; margin-left: 3px; }
+  .dataTables_wrapper { padding-top: 0.5rem; }
+  table.dataTable thead th, table.dataTable thead td { border-bottom: 1px solid #e5e7eb; }
+  table.dataTable.no-footer { border-bottom: 1px solid #e5e7eb; }
+  .filters select {
+    width: 100%;
+  }
+  .filters .select2-selection--multiple {
+    min-height: 30px !important;
+    padding: 0 4px 4px 4px !important;
+    border: 1px solid #ccc !important;
+    border-radius: 4px !important;
+  }
+  .filters .select2-search__field {
+    font-size: 12px !important;
+    margin-top: 4px !important;
+  }
+  .filters .select2-selection__choice {
+    background-color: #f3f4f6 !important;
+    border: 1px solid #d1d5db !important;
+    color: #374151 !important;
+    border-radius: 4px !important;
+    padding: 2px 6px !important;
+    margin-top: 4px !important;
+    font-size: 12px !important;
+    display: inline-flex !important;
+    flex-direction: row-reverse !important;
+    align-items: center !important;
+  }
+  .filters .select2-selection__choice__remove {
+    color: #ef4444 !important;
+    margin: 0 0 0 6px !important;
+    border: none !important;
+    background: none !important;
+    font-size: 16px !important;
+    line-height: 1 !important;
+    font-weight: bold !important;
+    cursor: pointer !important;
+    position: static !important;
+    display: flex !important;
+    align-items: center !important;
+    transform: translateY(-1px);
+  }
+  .filters .select2-selection__choice__remove:hover {
+    color: #b91c1c !important;
+    background: none !important;
+  }
+  .filters .select2-selection__clear {
+    margin-top: 5px !important;
+    margin-right: 4px !important;
+    color: #ef4444 !important;
+  }
+</style>
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script>
+$(document).ready(function() {
+    $('.datatable-standard').each(function() {
+        var $table = $(this);
+        $table.find('thead tr').clone(true).addClass('filters').appendTo($table.find('thead'));
+
+        var table = $table.DataTable({
+            orderCellsTop: true,
+            fixedHeader: true,
+            pageLength: 50,
+            lengthMenu: [ [10, 25, 50, 100, -1], [10, 25, 50, 100, "All"] ],
+            initComplete: function () {
+                var api = this.api();
+                api.columns().eq(0).each(function (colIdx) {
+                    var cell = $('.filters th', $table).eq($(api.column(colIdx).header()).index());
+                    var title = $(cell).text().trim();
+                    if(!title || title.toLowerCase() === 'aksi' || title.toLowerCase() === 'actions') { 
+                        $(cell).html('');
+                        return;
+                    }
+                    var uniqueValues = new Set();
+                    api.column(colIdx).data().each(function (d) {
+                        var text = $('<div>').html(d).text().trim();
+                        if(text && text !== '-') uniqueValues.add(text);
+                    });
+
+                    var select = $('<select multiple="multiple" data-placeholder="Filter ' + title + '"></select>')
+                        .appendTo($(cell).empty());
+
+                    Array.from(uniqueValues).sort().forEach(function(val) {
+                        select.append('<option value="' + val + '">' + val + '</option>');
+                    });
+
+                    select.select2({
+                        width: '100%',
+                        allowClear: true
+                    }).on('change', function() {
+                        var selectedValues = $(this).val() || [];
+                        var regex = selectedValues.map(function(val) {
+                            return $.fn.dataTable.util.escapeRegex(val);
+                        }).join('|');
+                        
+                        api.column(colIdx)
+                            .search(regex ? '^\\s*(' + regex + ')\\s*$' : '', true, false)
+                            .draw();
+                    });
+                });
+            },
+        });
+    });
+});
+</script>
