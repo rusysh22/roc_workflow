@@ -407,6 +407,114 @@ def delete_assignment(assignment_id):
     return redirect(url_for("assignments"))
 
 
+# ---------- Kertas Kerja (Workpapers) ----------
+
+@app.route("/workpapers")
+def workpapers():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT wu.id, wu.code, wu.project_name,
+                       e.code AS entity_code, e.name AS entity_name
+                FROM work_units wu
+                JOIN entities e ON e.id = wu.entity_id
+                ORDER BY e.code, wu.sort_order, wu.code
+                """
+            )
+            units = cur.fetchall()
+    finally:
+        conn.close()
+
+    grouped = {}
+    for u in units:
+        grouped.setdefault((u["entity_code"], u["entity_name"]), []).append(u)
+    groups = [
+        {"entity_code": k[0], "entity_name": k[1], "units": v}
+        for k, v in grouped.items()
+    ]
+
+    return render_template("workpapers.html", groups=groups, total_units=len(units))
+
+
+@app.route("/workpapers/<code>")
+def workpaper_detail(code):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT wu.id, wu.code, wu.project_name, wu.entity_id,
+                       e.code AS entity_code, e.name AS entity_name
+                FROM work_units wu
+                JOIN entities e ON e.id = wu.entity_id
+                WHERE wu.code = %s
+                """,
+                (code,),
+            )
+            unit = cur.fetchone()
+            if not unit:
+                flash("Kertas kerja tidak ditemukan.", "error")
+                return redirect(url_for("workpapers"))
+
+            cur.execute(
+                "SELECT id, seq, label FROM threshold_bands WHERE entity_id = %s ORDER BY seq",
+                (unit["entity_id"],),
+            )
+            bands = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT id, row_kind, seq, level_label, person_name, position, comment
+                FROM workpaper_rows
+                WHERE work_unit_id = %s
+                ORDER BY seq
+                """,
+                (unit["id"],),
+            )
+            rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT wa.row_id, wa.band_id, wa.required
+                FROM workpaper_authority wa
+                JOIN workpaper_rows wr ON wr.id = wa.row_id
+                WHERE wr.work_unit_id = %s
+                """,
+                (unit["id"],),
+            )
+            matrix = {(m["row_id"], m["band_id"]): m["required"] for m in cur.fetchall()}
+
+            cur.execute(
+                """
+                SELECT band_id, creator_name, approver_name
+                FROM ses_entries
+                WHERE work_unit_id = %s
+                """,
+                (unit["id"],),
+            )
+            ses = {s["band_id"]: s for s in cur.fetchall()}
+
+            cur.execute(
+                "SELECT code, project_name FROM work_units ORDER BY sort_order, code"
+            )
+            all_units = cur.fetchall()
+    finally:
+        conn.close()
+
+    authority_rows = [r for r in rows if r["row_kind"] == "authority"]
+    buyer_row = next((r for r in rows if r["row_kind"] == "buyer"), None)
+    creator_row = next((r for r in rows if r["row_kind"] == "creator"), None)
+
+    return render_template(
+        "workpaper_detail.html",
+        unit=unit, bands=bands, authority_rows=authority_rows,
+        buyer_row=buyer_row, creator_row=creator_row,
+        matrix=matrix, ses=ses, all_units=all_units,
+    )
+
+
 # ---------- Changelog ----------
 
 @app.route("/changelog")

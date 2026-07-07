@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}{{ unit.code }} — Kertas Kerja{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-4 no-print">
+  <a href="{{ url_for('workpapers') }}" class="text-sm text-gray-500 hover:text-gray-800">&larr; Semua kertas kerja</a>
+  <div class="flex items-center gap-3">
+    <form method="get" onchange="location.href='/workpapers/'+this.unit.value" class="text-sm">
+      <select name="unit" class="border border-gray-300 rounded-md px-2 py-1 text-sm">
+        {% for u in all_units %}
+          <option value="{{ u.code }}" {% if u.code == unit.code %}selected{% endif %}>{{ u.code }} — {{ u.project_name }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    <button onclick="window.print()" class="text-sm border border-gray-300 rounded-md px-3 py-1 hover:bg-gray-100">Print / PDF</button>
+  </div>
+</div>
+
+<div class="bg-white border border-gray-300 rounded-lg overflow-hidden print-sheet">
+  <!-- Header -->
+  <div class="grid grid-cols-2 border-b border-gray-300 text-sm">
+    <div class="px-4 py-2 border-r border-gray-300">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Nama Entitas / Company Name</span>
+      <div class="font-semibold text-gray-900">{{ unit.entity_name }}</div>
+    </div>
+    <div class="px-4 py-2">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Proyek / Project</span>
+      <div class="font-semibold text-gray-900">{{ unit.project_name }}</div>
+    </div>
+  </div>
+
+  <!-- PR matrix -->
+  <div class="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-700">
+    Purchase Request per event
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs border-collapse">
+      <thead>
+        <tr class="bg-gray-100 text-gray-700">
+          <th class="border border-gray-300 px-2 py-1 text-left w-40">Level / Tingkat</th>
+          <th class="border border-gray-300 px-2 py-1 text-left">Name / Nama</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-52">Position</th>
+          {% for b in bands %}
+            {% set parts = b.label.split(' or ') %}
+            <th class="border border-gray-300 px-1 py-1 text-center align-bottom w-16">
+              <div class="font-semibold">{{ parts[0] }}</div>
+              {% if parts|length > 1 %}<div class="font-normal text-gray-400 text-[10px]">{{ parts[1] }}</div>{% endif %}
+            </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in authority_rows %}
+        <tr>
+          <td class="border border-gray-300 px-2 py-1 font-medium">{{ r.level_label }}</td>
+          <td class="border border-gray-300 px-2 py-1">
+            {{ r.person_name or '—' }}
+            {% if r.comment %}<div class="text-[10px] text-amber-600">{{ r.comment }}</div>{% endif %}
+          </td>
+          <td class="border border-gray-300 px-2 py-1 text-gray-600">{{ r.position or '' }}</td>
+          {% for b in bands %}
+            {% set req = matrix.get((r.id, b.id)) %}
+            <td class="border border-gray-300 px-1 py-1 text-center
+                       {{ 'bg-green-50 text-green-700 font-semibold' if req else 'text-gray-300' }}">
+              {{ '✓' if req else '·' }}
+            </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Buyer & Creator -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-px bg-gray-300 border-t border-gray-300 text-xs">
+    <div class="bg-white px-4 py-2">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Buyer</span>
+      <div class="text-gray-900">{{ buyer_row.person_name if buyer_row else '—' }}</div>
+    </div>
+    <div class="bg-white px-4 py-2">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Purchase Request Creator</span>
+      <div class="text-gray-900">{{ creator_row.person_name if creator_row else '—' }}</div>
+    </div>
+  </div>
+
+  <!-- SES -->
+  <div class="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-700 border-t border-gray-300">
+    Service Entry Sheet (SES)
+  </div>
+  <div class="overflow-x-auto pb-3">
+    <table class="w-full text-xs border-collapse">
+      <thead>
+        <tr class="bg-gray-100 text-gray-700">
+          <th class="border border-gray-300 px-2 py-1 text-left">Nominal / Threshold</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-1/3">SES Creator</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-1/3">SES Approver</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in bands %}
+        {% set s = ses.get(b.id) %}
+        <tr>
+          <td class="border border-gray-300 px-2 py-1">{{ b.label }}</td>
+          <td class="border border-gray-300 px-2 py-1">{{ s.creator_name if s else '—' }}</td>
+          <td class="border border-gray-300 px-2 py-1">{{ s.approver_name if s else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+  @media print {
+    .no-print { display: none !important; }
+    nav { display: none !important; }
+    .print-sheet { border: none; }
+  }
+</style>
+{% endblock %}
