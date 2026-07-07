@@ -1,7 +1,8 @@
 CREATE TABLE entities (
   id SERIAL PRIMARY KEY,
   code VARCHAR(20) UNIQUE NOT NULL,
-  name TEXT NOT NULL
+  name TEXT NOT NULL,
+  exchange_rate_idr NUMERIC(14,2) NOT NULL DEFAULT 16000
 );
 
 CREATE TABLE sites (
@@ -74,43 +75,52 @@ CREATE TABLE work_units (
   sort_order INTEGER DEFAULT 0
 );
 
--- Nominal threshold bands (columns of the matrix). Kept per-entity so an
--- entity can carry its own exchange rate / band definitions.
-CREATE TABLE threshold_bands (
+-- Master scale of USD purchasing-authority tiers (columns of the matrix).
+-- Shared by every entity; each entity's own exchange_rate_idr converts a
+-- tier's USD bounds into the Rupiah figure shown alongside it.
+CREATE TABLE amount_tiers (
   id SERIAL PRIMARY KEY,
-  entity_id INTEGER REFERENCES entities(id),
-  seq INTEGER NOT NULL,
-  label TEXT NOT NULL,
-  UNIQUE(entity_id, seq)
+  seq INTEGER UNIQUE NOT NULL,
+  min_usd NUMERIC(18,2) NOT NULL,
+  max_usd NUMERIC(18,2)  -- NULL = unbounded (this tier and above)
+);
+
+-- Master list of job titles, referenced by workpaper_rows so the same
+-- title always reads identically across every unit.
+CREATE TABLE positions (
+  id SERIAL PRIMARY KEY,
+  title TEXT UNIQUE NOT NULL
 );
 
 -- Authority-holder rows within a unit (President Director ... Cost Reviewer,
 -- plus Buyer and PR Creator). row_kind: 'authority' | 'buyer' | 'creator'.
+-- The level itself is a role from the shared `roles` master table (the same
+-- one used by the Assignments module), not free text.
 CREATE TABLE workpaper_rows (
   id SERIAL PRIMARY KEY,
   work_unit_id INTEGER REFERENCES work_units(id) ON DELETE CASCADE,
   row_kind TEXT NOT NULL DEFAULT 'authority',
   seq INTEGER NOT NULL,
-  level_label TEXT,
+  role_id INTEGER REFERENCES roles(id),
   person_name TEXT,
-  position TEXT,
+  position_id INTEGER REFERENCES positions(id),
   comment TEXT
 );
 
--- Y/N per band for an authority row (the heart of the matrix).
+-- Y/N per tier for an authority row (the heart of the matrix).
 CREATE TABLE workpaper_authority (
   id SERIAL PRIMARY KEY,
   row_id INTEGER REFERENCES workpaper_rows(id) ON DELETE CASCADE,
-  band_id INTEGER REFERENCES threshold_bands(id),
+  tier_id INTEGER REFERENCES amount_tiers(id),
   required BOOLEAN NOT NULL DEFAULT FALSE,
-  UNIQUE(row_id, band_id)
+  UNIQUE(row_id, tier_id)
 );
 
--- Service Entry Sheet block: creator/approver per band.
+-- Service Entry Sheet block: creator/approver per tier.
 CREATE TABLE ses_entries (
   id SERIAL PRIMARY KEY,
   work_unit_id INTEGER REFERENCES work_units(id) ON DELETE CASCADE,
-  band_id INTEGER REFERENCES threshold_bands(id),
+  tier_id INTEGER REFERENCES amount_tiers(id),
   creator_name TEXT,
   approver_name TEXT
 );

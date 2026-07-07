@@ -54,9 +54,21 @@ INSERT INTO roles (name, is_centralized) VALUES
   ('SES Creator', FALSE),
   ('Buyer', TRUE),
   ('Cost Reviewer', TRUE),
-  ('Dept Head', FALSE),
+  ('Section Head', FALSE),
+  ('Department Head', FALSE),
   ('Division Head', FALSE),
   ('Deputy Director', FALSE),
   ('Assignment Director', FALSE),
   ('Director', FALSE),
   ('President Director', FALSE);
+
+-- Purchasing-authority amount tiers (USD-denominated master scale, shared by
+-- every entity's Kertas Kerja; each entity's own exchange_rate_idr computes
+-- the Rupiah figure shown alongside these bounds).
+INSERT INTO amount_tiers (seq, min_usd, max_usd) VALUES
+  (0, 0,       1000),
+  (1, 1000,    5000),
+  (2, 5000,    15000),
+  (3, 15000,   80000),
+  (4, 80000,   200000),
+  (5, 200000,  2000000);

@@ -108,7 +108,7 @@ INSERT INTO user_assignments (full_name, email, entity_id, site_id, role_id, is_
   ('Adi Umardani', 'adi.umardani@imugroup.com',
    (SELECT id FROM entities WHERE code = 'IMN'),
    (SELECT id FROM sites WHERE name = 'Batam' AND entity_id = (SELECT id FROM entities WHERE code = 'IMN')),
-   (SELECT id FROM roles WHERE name = 'Dept Head'), TRUE),
+   (SELECT id FROM roles WHERE name = 'Department Head'), TRUE),
   ('Azizi Syaldira Vitricia', 'azizi.vitricia@imugroup.com',
    (SELECT id FROM entities WHERE code = 'IMN'),
    (SELECT id FROM sites WHERE name = 'Batam' AND entity_id = (SELECT id FROM entities WHERE code = 'IMN')),

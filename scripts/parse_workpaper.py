@@ -96,6 +96,12 @@ def parse_unit_sheet(ws):
                 return v
         return ""
 
+    # Bound each scan so it stops before the next labelled column instead of
+    # bleeding into it (e.g. an empty Name cell must not pick up a stray
+    # value sitting in the Position column further right).
+    name_span = max(1, pos_col - name_col) if pos_col else 6
+    level_span = max(1, name_col - level_col)
+
     rows = []
     ses = []
     r = header_row + 1
@@ -112,7 +118,7 @@ def parse_unit_sheet(ws):
             if v in ("Y", "N"):
                 yn[c] = v == "Y"
                 any_yn = True
-        name = cell_after(r, name_col)
+        name = cell_after(r, name_col, name_span)
         position = norm(ws.cell(r, pos_col).value) if pos_col else ""
         comment = norm(ws.cell(r, comment_col).value) if comment_col else ""
         if position in ("0", "#N/A"):
@@ -137,7 +143,7 @@ def parse_unit_sheet(ws):
             # The person's name usually sits on the next row for these blocks.
             person = name
             if not person:
-                person = cell_after(r + 1, name_col) or cell_after(r + 1, level_col)
+                person = cell_after(r + 1, name_col, name_span) or cell_after(r + 1, level_col, level_span)
             rows.append({"kind": kind, "level": level, "name": person,
                          "position": position, "comment": comment, "bands": {}})
         r += 1
