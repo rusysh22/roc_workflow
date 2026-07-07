@@ -4,39 +4,164 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Login - Authority Matrix</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-50 text-gray-900 min-h-screen flex items-center justify-center">
-  <div class="w-full max-w-sm">
-    <h1 class="text-xl font-semibold text-center mb-6">Authority Matrix</h1>
+  <style>
+    /*=============== VARIABLES ===============*/
+    :root {
+      --white-color: hsl(0, 0%, 100%);
+      --black-color: hsl(0, 0%, 0%);
+      --body-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --h1-font-size: 1.5rem;
+      --normal-font-size: 1rem;
+      --small-font-size: .813rem;
+    }
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="mb-4 space-y-2">
+    /*=============== BASE ===============*/
+    * { box-sizing: border-box; padding: 0; margin: 0; }
+    body, input, button { font-family: var(--body-font); font-size: var(--normal-font-size); }
+    img { display: block; max-width: 100%; height: auto; }
+
+    /*=============== LOGIN ===============*/
+    .login {
+      position: relative;
+      min-height: 100vh;
+      display: grid;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      overflow: hidden;
+    }
+
+    /* Brand-colored backdrop (sampled from the Interport logo) standing in
+       for bedimcode's photo background, so the page has no external asset. */
+    .login__bg {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 15% 20%, hsla(200, 70%, 55%, .35), transparent 45%),
+        radial-gradient(circle at 85% 75%, hsla(100, 40%, 45%, .30), transparent 45%),
+        linear-gradient(135deg, #05263d 0%, #0b3d5c 35%, #0084ae 70%, #34b0e1 100%);
+    }
+
+    .login__form {
+      position: relative;
+      width: 100%;
+      max-width: 380px;
+      background-color: hsla(0, 0%, 100%, .08);
+      border: 1px solid hsla(0, 0%, 100%, .35);
+      padding: 2.25rem 2rem;
+      color: var(--white-color);
+      border-radius: 1.25rem;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      box-shadow: 0 8px 32px hsla(0, 0%, 0%, .25);
+    }
+
+    .login__logo-wrap {
+      background-color: hsla(0, 0%, 100%, .92);
+      border-radius: .9rem;
+      padding: .9rem 1.25rem;
+      margin: 0 auto 1.5rem;
+      max-width: 220px;
+    }
+
+    .login__logo { width: 100%; }
+
+    .login__title {
+      text-align: center;
+      font-size: var(--h1-font-size);
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+    }
+
+    .login__message {
+      font-size: var(--small-font-size);
+      padding: .6rem .9rem;
+      border-radius: .6rem;
+      margin-bottom: 1rem;
+      border: 1px solid hsla(0, 0%, 100%, .35);
+    }
+    .login__message--error { background: hsla(0, 70%, 50%, .25); }
+    .login__message--success { background: hsla(140, 60%, 45%, .25); }
+
+    .login__inputs { display: grid; row-gap: 1.1rem; margin-bottom: 1.25rem; }
+
+    .login__box {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      column-gap: .75rem;
+      align-items: center;
+      border: 2px solid hsla(0, 0%, 100%, .5);
+      padding-inline: 1.1rem;
+      border-radius: 4rem;
+    }
+    .login__box:focus-within { border-color: hsla(0, 0%, 100%, .9); }
+
+    .login__box svg { width: 1.1rem; height: 1.1rem; flex-shrink: 0; opacity: .85; }
+
+    .login__input {
+      width: 100%;
+      background: none;
+      border: none;
+      outline: none;
+      color: var(--white-color);
+      padding-block: .9rem;
+    }
+    .login__input::placeholder { color: hsla(0, 0%, 100%, .75); }
+
+    .login__button {
+      width: 100%;
+      padding: .9rem;
+      border: none;
+      outline: none;
+      background-color: var(--white-color);
+      border-radius: 4rem;
+      color: #0b3d5c;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .login__button:hover { box-shadow: 0 4px 14px hsla(0, 0%, 0%, .25); transform: translateY(-1px); }
+
+    @media screen and (min-width: 576px) {
+      .login__form { padding: 2.75rem 2.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="login">
+    <div class="login__bg"></div>
+
+    <form method="post" class="login__form">
+      <div class="login__logo-wrap">
+        <img src="{{ url_for('static', filename='img/logo-interport.webp') }}" alt="Interport" class="login__logo">
+      </div>
+      <h1 class="login__title">Authority Matrix</h1>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
           {% for category, message in messages %}
-            <div class="rounded-md px-4 py-2 text-sm border {{ 'bg-green-50 text-green-700 border-green-200' if category == 'success' else 'bg-red-50 text-red-700 border-red-200' }}">
+            <div class="login__message login__message--{{ 'error' if category == 'error' else 'success' }}">
               {{ message }}
             </div>
           {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
+        {% endif %}
+      {% endwith %}
 
-    <form method="post" class="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
       <input type="hidden" name="next" value="{{ next }}">
-      <div>
-        <label class="block text-sm font-medium mb-1">Email</label>
-        <input type="email" name="email" required autofocus value="{{ email }}"
-               class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+
+      <div class="login__inputs">
+        <div class="login__box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z" opacity="0"/><path d="M22 6 12 13 2 6"/><path d="M2 6h20v12H2z"/></svg>
+          <input type="email" name="email" placeholder="Email" required autofocus value="{{ email }}" class="login__input">
+        </div>
+
+        <div class="login__box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <input type="password" name="password" placeholder="Password" required class="login__input">
+        </div>
       </div>
-      <div>
-        <label class="block text-sm font-medium mb-1">Password</label>
-        <input type="password" name="password" required
-               class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
-      </div>
-      <button type="submit" class="w-full bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">
-        Login
-      </button>
+
+      <button type="submit" class="login__button">Login</button>
     </form>
   </div>
 </body>
