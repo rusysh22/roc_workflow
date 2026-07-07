@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if mode == 'edit' else 'Add' }} Assignment{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">{{ 'Edit Assignment' if mode == 'edit' else 'Add Assignment' }}</h1>
+
+<form method="post"
+      class="space-y-4 max-w-lg"
+      action="{{ url_for('edit_assignment', assignment_id=assignment.id) if mode == 'edit' else url_for('new_assignment') }}">
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Changed by</label>
+    <input type="text" name="admin_name" required value="{{ assignment.admin_name or '' }}"
+           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Full Name</label>
+    <input type="text" name="full_name" required value="{{ assignment.full_name or '' }}"
+           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Email</label>
+    <input type="email" name="email" required value="{{ assignment.email or '' }}"
+           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Entity</label>
+    <select name="entity_id" id="entity_id" required
+            class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+      <option value="">-- Select Entity --</option>
+      {% for e in entities %}
+        <option value="{{ e.id }}" {% if assignment.entity_id == e.id %}selected{% endif %}>{{ e.code }} - {{ e.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Role</label>
+    <select name="role_id" id="role_id" required
+            class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+      <option value="">-- Select Role --</option>
+      {% for r in roles %}
+        <option value="{{ r.id }}" data-centralized="{{ '1' if r.is_centralized else '0' }}"
+                {% if assignment.role_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div id="site_field">
+    <label class="block text-sm font-medium mb-1">Site</label>
+    <select name="site_id" id="site_id"
+            class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+      <option value="">-- Select Site --</option>
+      {% for s in sites %}
+        <option value="{{ s.id }}" data-entity="{{ s.entity_code }}"
+                {% if assignment.site_id == s.id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
+      {% endfor %}
+    </select>
+    <p id="centralized_note" class="text-xs text-gray-500 mt-1 hidden">
+      Buyer &amp; Cost Reviewer are centralized at HO Jakarta — site is set automatically.
+    </p>
+  </div>
+
+  <div class="flex items-center gap-2">
+    <input type="checkbox" name="is_active" id="is_active"
+           {% if assignment is none or assignment.is_active %}checked{% endif %}
+           class="rounded border-gray-300">
+    <label for="is_active" class="text-sm">Active</label>
+  </div>
+
+  <div class="flex gap-3 pt-2">
+    <button type="submit" class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">
+      {{ 'Save Changes' if mode == 'edit' else 'Add Assignment' }}
+    </button>
+    <a href="{{ url_for('assignments') }}" class="text-sm text-gray-500 px-4 py-2 hover:text-gray-800">Cancel</a>
+  </div>
+</form>
+
+<script>
+  var entitySelect = document.getElementById('entity_id');
+  var roleSelect = document.getElementById('role_id');
+  var siteSelect = document.getElementById('site_id');
+  var centralizedNote = document.getElementById('centralized_note');
+  var siteOptions = Array.prototype.slice.call(siteSelect.options);
+
+  function isCentralized() {
+    var opt = roleSelect.options[roleSelect.selectedIndex];
+    return !!opt && opt.dataset.centralized === '1';
+  }
+
+  function filterSitesByEntity() {
+    var entityOpt = entitySelect.options[entitySelect.selectedIndex];
+    var entityCode = entityOpt ? entityOpt.textContent.split(' - ')[0] : '';
+    siteOptions.forEach(function (opt) {
+      if (!opt.value) { opt.hidden = false; return; }
+      opt.hidden = !!entityCode && opt.dataset.entity !== entityCode;
+    });
+  }
+
+  function applyCentralizedRule() {
+    if (isCentralized()) {
+      siteSelect.disabled = true;
+      centralizedNote.classList.remove('hidden');
+    } else {
+      siteSelect.disabled = false;
+      centralizedNote.classList.add('hidden');
+    }
+  }
+
+  entitySelect.addEventListener('change', filterSitesByEntity);
+  roleSelect.addEventListener('change', applyCentralizedRule);
+  filterSitesByEntity();
+  applyCentralizedRule();
+</script>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">Dashboard</h1>
+
+<div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
+  <div class="border border-gray-200 rounded-lg bg-white px-4 py-3">
+    <p class="text-xs text-gray-500">Entities</p>
+    <p class="text-2xl font-semibold">{{ total_entities }}</p>
+  </div>
+  <div class="border border-gray-200 rounded-lg bg-white px-4 py-3">
+    <p class="text-xs text-gray-500">Sites</p>
+    <p class="text-2xl font-semibold">{{ total_sites }}</p>
+  </div>
+  <div class="border border-gray-200 rounded-lg bg-white px-4 py-3">
+    <p class="text-xs text-gray-500">Roles</p>
+    <p class="text-2xl font-semibold">{{ total_roles }}</p>
+  </div>
+  <div class="border border-gray-200 rounded-lg bg-white px-4 py-3">
+    <p class="text-xs text-gray-500">Assignments</p>
+    <p class="text-2xl font-semibold">{{ total_assignments }}</p>
+  </div>
+  <div class="border border-gray-200 rounded-lg bg-white px-4 py-3">
+    <p class="text-xs text-gray-500">Active Assignments</p>
+    <p class="text-2xl font-semibold">{{ total_active }}</p>
+  </div>
+</div>
+
+<h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2">Coverage by Entity</h2>
+<div class="overflow-x-auto border border-gray-200 rounded-lg mb-6">
+  <table class="min-w-full text-sm">
+    <thead class="bg-gray-100 text-left text-gray-600">
+      <tr>
+        <th class="px-4 py-2">Entity</th>
+        <th class="px-4 py-2">Assignments</th>
+        <th class="px-4 py-2">Active</th>
+        <th class="px-4 py-2">Roles Covered</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for e in entity_summary %}
+      <tr>
+        <td class="px-4 py-2">
+          <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ entity_badge_class(e.entity_code) }}">
+            {{ e.entity_code }}
+          </span>
+          <span class="text-gray-500 ml-1">{{ e.entity_name }}</span>
+        </td>
+        <td class="px-4 py-2">{{ e.total_count }}</td>
+        <td class="px-4 py-2">{{ e.active_count }}</td>
+        <td class="px-4 py-2">
+          <div class="flex items-center gap-2">
+            <div class="w-28 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+              <div class="h-full rounded-full {{ 'bg-green-500' if e.coverage_tier == 'good' else 'bg-amber-500' if e.coverage_tier == 'warning' else 'bg-red-500' }}"
+                   style="width: {{ e.coverage_pct }}%"></div>
+            </div>
+            <span class="text-gray-500 text-xs">{{ e.roles_covered }}/{{ total_roles }}</span>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4" class="px-4 py-6 text-center text-gray-400">No entities found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2">Recent Activity</h2>
+<div class="border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
+  {% for c in recent_changes %}
+  <div class="px-4 py-2.5 text-sm flex items-center gap-3">
+    <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium shrink-0
+      {{ 'bg-green-100 text-green-700' if c.action == 'CREATE'
+         else 'bg-red-100 text-red-700' if c.action == 'DELETE'
+         else 'bg-blue-100 text-blue-700' }}">
+      {{ c.action }}
+    </span>
+    <span class="text-gray-500 shrink-0">{{ c.changed_at.strftime('%Y-%m-%d %H:%M') }}</span>
+    <span class="text-gray-700 truncate">
+      {{ c.admin_name }}
+      {% if c.entity_code %}on {{ c.entity_code }}{% endif %}
+      {% if c.field_changed %}&mdash; {{ c.field_changed }}: {{ c.old_value or '-' }} &rarr; {{ c.new_value or '-' }}{% else %}&mdash; {{ c.new_value or c.old_value or '' }}{% endif %}
+    </span>
+  </div>
+  {% else %}
+  <div class="px-4 py-6 text-center text-gray-400 text-sm">No activity yet.</div>
+  {% endfor %}
+</div>
+<div class="mt-2 text-right">
+  <a href="{{ url_for('changelog') }}" class="text-sm text-gray-500 hover:text-gray-800">View full changelog &rarr;</a>
+</div>
+{% endblock %}

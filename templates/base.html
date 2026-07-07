@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Authority Matrix{% endblock %} - IMU Group</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <nav class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+    <a href="{{ url_for('home') }}" class="font-semibold text-lg text-gray-900">Authority Matrix</a>
+    <div class="space-x-4 text-sm">
+      <a href="{{ url_for('home') }}" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+      <a href="{{ url_for('assignments') }}" class="text-gray-600 hover:text-gray-900">Assignments</a>
+      <a href="{{ url_for('changelog') }}" class="text-gray-600 hover:text-gray-900">Changelog</a>
+      <a href="{{ url_for('export') }}" class="text-gray-600 hover:text-gray-900">Export</a>
+    </div>
+  </nav>
+
+  <main class="max-w-6xl mx-auto px-6 py-6">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="mb-4 space-y-2">
+          {% for category, message in messages %}
+            <div class="rounded-md px-4 py-2 text-sm border {{ 'bg-green-50 text-green-700 border-green-200' if category == 'success' else 'bg-red-50 text-red-700 border-red-200' }}">
+              {{ message }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    function confirmDelete(form) {
+      if (!window.confirm('Delete this assignment? This cannot be undone.')) {
+        return false;
+      }
+      var name = window.prompt('Your name (for the audit log):');
+      if (!name) {
+        return false;
+      }
+      form.querySelector('.admin-name-field').value = name;
+      return true;
+    }
+  </script>
+</body>
+</html>

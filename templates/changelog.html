@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Changelog{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">Changelog</h1>
+
+<div class="overflow-x-auto border border-gray-200 rounded-lg">
+  <table class="min-w-full text-sm">
+    <thead class="bg-gray-100 text-left text-gray-600">
+      <tr>
+        <th class="px-4 py-2">Time</th>
+        <th class="px-4 py-2">Admin</th>
+        <th class="px-4 py-2">Action</th>
+        <th class="px-4 py-2">Entity</th>
+        <th class="px-4 py-2">Field</th>
+        <th class="px-4 py-2">Old Value</th>
+        <th class="px-4 py-2">New Value</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for c in entries %}
+      <tr>
+        <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ c.changed_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="px-4 py-2">{{ c.admin_name }}</td>
+        <td class="px-4 py-2">
+          <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium
+            {{ 'bg-green-100 text-green-700' if c.action == 'CREATE'
+               else 'bg-red-100 text-red-700' if c.action == 'DELETE'
+               else 'bg-blue-100 text-blue-700' }}">
+            {{ c.action }}
+          </span>
+        </td>
+        <td class="px-4 py-2">
+          {% if c.entity_code %}
+            <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ entity_badge_class(c.entity_code) }}">
+              {{ c.entity_code }}
+            </span>
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td class="px-4 py-2 text-gray-500">{{ c.field_changed or '-' }}</td>
+        <td class="px-4 py-2 text-gray-500">{{ c.old_value or '-' }}</td>
+        <td class="px-4 py-2">{{ c.new_value or '-' }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="px-4 py-6 text-center text-gray-400">No changes recorded yet.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
