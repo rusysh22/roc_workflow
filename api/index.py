@@ -12,7 +12,7 @@ from lib.db import get_db_connection, log_change  # noqa: E402
 from lib.export import build_export_workbook  # noqa: E402
 from lib.money import format_tier_label  # noqa: E402
 
-app = Flask(__name__, template_folder="../templates")
+app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
 PUBLIC_ENDPOINTS = {"login", "static"}
