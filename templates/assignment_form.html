@@ -8,12 +8,6 @@
       action="{{ url_for('edit_assignment', assignment_id=assignment.id) if mode == 'edit' else url_for('new_assignment') }}">
 
   <div>
-    <label class="block text-sm font-medium mb-1">Changed by</label>
-    <input type="text" name="admin_name" required value="{{ assignment.admin_name or '' }}"
-           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
-  </div>
-
-  <div>
     <label class="block text-sm font-medium mb-1">Full Name</label>
     <input type="text" name="full_name" required value="{{ assignment.full_name or '' }}"
            class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">

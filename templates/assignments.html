@@ -61,8 +61,7 @@
           <a href="{{ url_for('edit_assignment', assignment_id=a.id) }}"
              class="text-gray-500 hover:text-gray-900">Edit</a>
           <form method="post" action="{{ url_for('delete_assignment', assignment_id=a.id) }}"
-                class="inline" onsubmit="return confirmDelete(this)">
-            <input type="hidden" name="admin_name" class="admin-name-field">
+                class="inline" onsubmit="return confirm('Delete this assignment? This cannot be undone.')">
             <button type="submit" class="text-red-500 hover:text-red-700 ml-3">Delete</button>
           </form>
         </td>

@@ -1,3 +1,19 @@
+# Setup Awal: User Login
+
+Aplikasi mengharuskan login untuk semua halaman. Buat akun awal dengan:
+
+```bash
+cd scripts
+python3 seed_users.py > ../sql/seed_users.sql
+psql "$DATABASE_URL" -f ../sql/seed_users.sql
+```
+
+Daftar user dan password default diatur di `scripts/seed_users.py` (`USERS`,
+`DEFAULT_PASSWORD`). Setiap user **wajib ganti password** saat login pertama
+kali (`must_change_password`). Menjalankan ulang script ini aman — user yang
+sudah ada (dan sudah ganti password) tidak akan ter-reset
+(`ON CONFLICT (email) DO NOTHING`).
+
 # Import Kertas Kerja dari Workbook Human Capital
 
 Alur mengubah workbook Excel "Workflow Approval IMU Group" menjadi data

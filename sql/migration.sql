@@ -37,6 +37,17 @@ CREATE TABLE approval_levels (
   label TEXT NOT NULL
 );
 
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE TABLE changelog (
   id SERIAL PRIMARY KEY,
   admin_name TEXT NOT NULL,
