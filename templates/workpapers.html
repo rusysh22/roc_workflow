@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Kertas Kerja{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-1">
+  <h1 class="text-xl font-semibold">Kertas Kerja — Workflow Approval</h1>
+  <span class="text-sm text-gray-500">{{ total_units }} unit</span>
+</div>
+<p class="text-sm text-gray-500 mb-6">
+  Matriks otorisasi Purchase Request &amp; Service Entry Sheet per entitas dan unit,
+  dibaca langsung dari data (dinamis). Klik satu unit untuk melihat kertas kerjanya.
+</p>
+
+{% for g in groups %}
+<div class="mb-6">
+  <div class="flex items-center gap-2 mb-2">
+    <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ entity_badge_class(g.entity_code) }}">
+      {{ g.entity_code }}
+    </span>
+    <h2 class="text-sm font-semibold text-gray-700">{{ g.entity_name }}</h2>
+    <span class="text-xs text-gray-400">{{ g.units|length }} unit</span>
+  </div>
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+    {% for u in g.units %}
+    <a href="{{ url_for('workpaper_detail', code=u.code) }}"
+       class="block border border-gray-200 rounded-lg bg-white px-4 py-3 hover:border-gray-400 hover:shadow-sm transition">
+      <p class="text-sm font-medium text-gray-900">{{ u.project_name }}</p>
+      <p class="text-xs text-gray-400 mt-0.5">{{ u.code }}</p>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="border border-gray-200 rounded-lg bg-white px-4 py-10 text-center text-gray-400">
+  Belum ada data kertas kerja. Jalankan <code>sql/seed_workpaper.sql</code> untuk mengimpor dari workbook.
+</div>
+{% endfor %}
+{% endblock %}
