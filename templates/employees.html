@@ -11,6 +11,7 @@
   <table id="employeesTable" class="min-w-full text-sm datatable-standard">
     <thead class="bg-gray-100 text-left text-gray-600">
       <tr>
+        <th class="px-2 py-2 w-8 text-center"></th>
         <th class="px-4 py-2">Name</th>
         <th class="px-4 py-2">Email</th>
         <th class="px-4 py-2">Entity</th>
@@ -22,54 +23,53 @@
     </thead>
     <tbody class="divide-y divide-gray-100">
       {% for emp in employees %}
-      <tr class="border-b border-gray-300 last:border-0 hover:bg-gray-100 transition-colors {{ '' if emp.is_active else 'opacity-50' }}">
+      <tr class="border-b border-gray-300 last:border-0 hover:bg-gray-50 transition-colors {{ '' if emp.is_active else 'opacity-50' }}">
+        
+        {% set entities = [] %}
+        {% set sites = [] %}
+        {% set roles = [] %}
+        {% set assignment_details = [] %}
+        {% for a in emp.assignments_list|reject('none') %}
+          {% set parts = a.split(' : ') %}
+          {% if parts|length == 2 %}
+            {% set entity = parts[0] %}
+            {% set site = parts[1].split(' — ')[0] %}
+            {% set role = parts[1].split(' — ')[1] %}
+            
+            {% if entity not in entities %}{% set _ = entities.append(entity) %}{% endif %}
+            {% if site not in sites %}{% set _ = sites.append(site) %}{% endif %}
+            {% if role not in roles %}{% set _ = roles.append(role) %}{% endif %}
+            {% set _ = assignment_details.append({'entity': entity, 'site': site, 'role': role}) %}
+          {% endif %}
+        {% endfor %}
+
+        <td class="px-2 py-3 align-top text-center">
+          {% if assignment_details|length > 0 %}
+            <button class="details-toggle w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-200 text-blue-500 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          {% endif %}
+        </td>
         <td class="px-4 py-3 font-medium align-top">{{ emp.full_name }}</td>
         <td class="px-4 py-3 text-gray-500 align-top">{{ emp.email }}</td>
+        
         <td class="px-4 py-3 align-top">
-          <div class="flex flex-col gap-2">
-            {% set ns_entity = namespace(prev='') %}
-            {% for assignment in emp.assignments_list|reject('none') %}
-              {% set parts = assignment.split(' : ') %}
-              {% if parts|length == 2 %}
-                <div class="h-6 flex items-center">
-                  {% if parts[0] != ns_entity.prev %}
-                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 tracking-wide">{{ parts[0] }}</span>
-                    {% set ns_entity.prev = parts[0] %}
-                  {% endif %}
-                </div>
-              {% endif %}
-            {% endfor %}
-          </div>
+          <span class="text-xs font-semibold text-gray-600 bg-gray-100 px-2 py-1 rounded">{{ entities|length }} Entities</span>
+          {% for e in entities %} <span class="filter-val hidden">{{ e }}</span> {% endfor %}
         </td>
+        
         <td class="px-4 py-3 align-top">
-          <div class="flex flex-col gap-2">
-            {% set ns_site = namespace(prev='') %}
-            {% for assignment in emp.assignments_list|reject('none') %}
-              {% set parts = assignment.split(' : ') %}
-              {% if parts|length == 2 %}
-                {% set site = parts[1].split(' — ')[0] %}
-                <div class="h-6 flex items-center text-xs text-gray-700">
-                  {% if site != ns_site.prev %}
-                    {{ site }}
-                    {% set ns_site.prev = site %}
-                  {% endif %}
-                </div>
-              {% endif %}
-            {% endfor %}
-          </div>
+          <span class="text-xs font-semibold text-gray-600 bg-gray-100 px-2 py-1 rounded">{{ sites|length }} Sites</span>
+          {% for s in sites %} <span class="filter-val hidden">{{ s }}</span> {% endfor %}
         </td>
+        
         <td class="px-4 py-3 align-top">
-          <div class="flex flex-col gap-2">
-            {% for assignment in emp.assignments_list|reject('none') %}
-              {% set parts = assignment.split(' : ') %}
-              {% if parts|length == 2 %}
-                <div class="h-6 flex items-center">
-                  <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-200">{{ parts[1].split(' — ')[1] }}</span>
-                </div>
-              {% endif %}
-            {% endfor %}
-          </div>
+          <span class="text-xs font-semibold text-gray-600 bg-gray-100 px-2 py-1 rounded">{{ roles|length }} Roles</span>
+          {% for r in roles %} <span class="filter-val hidden">{{ r }}</span> {% endfor %}
         </td>
+        
         <td class="px-4 py-3 align-top">
           <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold {{ 'bg-green-100 text-green-700' if emp.is_active else 'bg-gray-100 text-gray-500' }}">
             {{ 'Active' if emp.is_active else 'Inactive' }}
@@ -81,6 +81,23 @@
             <button type="submit" class="text-red-500 hover:text-red-700 ml-3">Delete</button>
           </form>
         </td>
+
+        <template class="child-template">
+          <div class="p-4 bg-blue-50/50 border-t border-b border-gray-200">
+            <h4 class="font-semibold text-sm mb-3 text-gray-700">Assignment Details ({{ assignment_details|length }})</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {% for ad in assignment_details %}
+              <div class="flex items-center gap-3 bg-white p-2 rounded border border-gray-200 shadow-sm">
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-wide w-12 text-center shrink-0 {{ entity_badge_class(ad.entity) }}">{{ ad.entity }}</span>
+                <div class="flex flex-col">
+                  <span class="text-xs font-medium text-gray-800">{{ ad.site }}</span>
+                  <span class="text-[10px] text-gray-500">{{ ad.role }}</span>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </template>
       </tr>
       {% else %}
       <tr>
@@ -92,4 +109,29 @@
 </div>
 
 {% include 'datatables_standard.html' %}
+<script>
+$(document).ready(function() {
+    var table = $('#employeesTable').DataTable();
+    
+    $('#employeesTable tbody').on('click', '.details-toggle', function () {
+        var tr = $(this).closest('tr');
+        var row = table.row( tr );
+        var icon = $(this).find('svg');
+ 
+        if ( row.child.isShown() ) {
+            row.child.hide();
+            tr.removeClass('bg-blue-50/20');
+            icon.css('transform', 'rotate(0deg)');
+        }
+        else {
+            var content = tr.find('.child-template').html();
+            row.child( content ).show();
+            // Style the child row container
+            row.child().find('td').addClass('p-0');
+            tr.addClass('bg-blue-50/20');
+            icon.css('transform', 'rotate(180deg)');
+        }
+    });
+});
+</script>
 {% endblock %}

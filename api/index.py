@@ -3,6 +3,8 @@ import sys
 from datetime import datetime
 
 import psycopg2
+from markupsafe import Markup, escape
+from psycopg2.extras import Json
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,7 +25,28 @@ try:
         cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS creator_role_id INTEGER REFERENCES roles(id);")
         cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS approver_role_id INTEGER REFERENCES roles(id);")
         cur.execute("ALTER TABLE workpaper_rows ADD COLUMN IF NOT EXISTS comment TEXT;")
-        
+
+        # Version & Status columns
+        cur.execute("ALTER TABLE work_units ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';")
+        cur.execute("ALTER TABLE work_units ADD COLUMN IF NOT EXISTS version_major INTEGER NOT NULL DEFAULT 1;")
+        cur.execute("ALTER TABLE work_units ADD COLUMN IF NOT EXISTS version_minor INTEGER NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE work_units ADD COLUMN IF NOT EXISTS version_patch INTEGER NOT NULL DEFAULT 0;")
+
+        # Version log (changelog per workpaper)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS workpaper_version_log (
+                id SERIAL PRIMARY KEY,
+                work_unit_id INTEGER REFERENCES work_units(id) ON DELETE CASCADE,
+                version TEXT NOT NULL,
+                bump_type TEXT NOT NULL,
+                comment TEXT,
+                author TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("ALTER TABLE workpaper_version_log ADD COLUMN IF NOT EXISTS snapshot JSONB;")
+        cur.execute("ALTER TABLE workpaper_version_log ADD COLUMN IF NOT EXISTS changes JSONB;")
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tier_entities (
                 tier_id INTEGER REFERENCES amount_tiers(id) ON DELETE CASCADE,
@@ -161,6 +184,19 @@ app.jinja_env.globals["entity_badge_class"] = entity_badge_class
 app.jinja_env.globals["string_badge_class"] = string_badge_class
 
 
+def bold_slash(value):
+    """Bold the ' / ' separator between multiple names, keeping each name
+    itself escaped (safe against XSS) since names are user-entered data."""
+    if not value:
+        return value
+    parts = str(value).split(" / ")
+    separator = Markup(' <span class="font-bold">/</span> ')
+    return Markup(separator.join(escape(p) for p in parts))
+
+
+app.jinja_env.filters["bold_slash"] = bold_slash
+
+
 def get_lookup_data(cur):
     cur.execute("SELECT id, code, name FROM entities ORDER BY code")
     entities = cur.fetchall()
@@ -169,7 +205,8 @@ def get_lookup_data(cur):
         """
         SELECT s.id, s.name, e.code AS entity_code
         FROM sites s
-        JOIN entities e ON e.id = s.entity_id
+        JOIN entity_sites es ON es.site_id = s.id
+        JOIN entities e ON e.id = es.entity_id
         ORDER BY e.code, s.name
         """
     )
@@ -179,6 +216,32 @@ def get_lookup_data(cur):
     roles = cur.fetchall()
 
     return entities, sites, roles
+
+
+def get_employee_assignments_map(cur):
+    """All assignments for every employee, grouped by email -- used to show
+    'assigned elsewhere' info in the assignment form without extra requests."""
+    cur.execute(
+        """
+        SELECT ua.id, ua.email, ua.is_active,
+               e.code AS entity_code, s.name AS site_name, r.name AS role_name
+        FROM user_assignments ua
+        JOIN entities e ON e.id = ua.entity_id
+        JOIN roles r ON r.id = ua.role_id
+        LEFT JOIN sites s ON s.id = ua.site_id
+        ORDER BY e.code, s.name, r.name
+        """
+    )
+    by_email = {}
+    for row in cur.fetchall():
+        by_email.setdefault(row["email"], []).append({
+            "id": row["id"],
+            "entity_code": row["entity_code"],
+            "site_name": row["site_name"],
+            "role_name": row["role_name"],
+            "is_active": row["is_active"],
+        })
+    return by_email
 
 
 def get_ho_jakarta_site_id(cur):
@@ -292,6 +355,8 @@ def assignments():
             rows = cur.fetchall()
 
             entities, _sites, roles = get_lookup_data(cur)
+            cur.execute("SELECT DISTINCT email, full_name FROM user_assignments ORDER BY full_name")
+            employees_list = cur.fetchall()
     finally:
         conn.close()
 
@@ -302,6 +367,7 @@ def assignments():
         roles=roles,
         selected_entity=entity_code,
         selected_role=role_id,
+        employees_list=employees_list,
     )
 
 
@@ -514,7 +580,7 @@ def employees():
                     array_agg(
                         concat(
                             COALESCE(e.code, '-'), ' : ',
-                            COALESCE(s.name, 'All Sites'), ' — ',
+                            COALESCE(s.name, 'All Site/Unit Applied'), ' — ',
                             COALESCE(r.name, '-')
                         ) ORDER BY e.code, s.name, r.name
                     ) as assignments_list,
@@ -589,6 +655,7 @@ def new_assignment():
             entities, sites, roles = get_lookup_data(cur)
             cur.execute("SELECT DISTINCT email, full_name FROM user_assignments ORDER BY full_name")
             employees_list = cur.fetchall()
+            employee_assignments = get_employee_assignments_map(cur)
 
             if request.method == "POST":
                 data, errors = _read_assignment_form(cur, roles)
@@ -598,7 +665,8 @@ def new_assignment():
                         flash(message, "error")
                     return render_template(
                         "assignment_form.html", mode="create", assignment=_sticky_assignment(data),
-                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list,
+                        employee_assignments=employee_assignments, current_assignment_id=None,
                     )
 
                 try:
@@ -623,7 +691,8 @@ def new_assignment():
                     flash("An assignment with this email, entity, and role already exists.", "error")
                     return render_template(
                         "assignment_form.html", mode="create", assignment=_sticky_assignment(data),
-                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list,
+                        employee_assignments=employee_assignments, current_assignment_id=None,
                     )
 
                 flash("Assignment added.", "success")
@@ -635,7 +704,8 @@ def new_assignment():
 
     return render_template(
         "assignment_form.html", mode="create", assignment=assignment,
-        entities=entities, sites=sites, roles=roles, employees_list=employees_list
+        entities=entities, sites=sites, roles=roles, employees_list=employees_list,
+        employee_assignments=employee_assignments, current_assignment_id=None,
     )
 
 @app.route("/assignments/<int:assignment_id>/edit", methods=["GET", "POST"])
@@ -646,6 +716,7 @@ def edit_assignment(assignment_id):
             entities, sites, roles = get_lookup_data(cur)
             cur.execute("SELECT DISTINCT email, full_name FROM user_assignments ORDER BY full_name")
             employees_list = cur.fetchall()
+            employee_assignments = get_employee_assignments_map(cur)
 
             cur.execute(
                 """
@@ -672,7 +743,8 @@ def edit_assignment(assignment_id):
                     return render_template(
                         "assignment_form.html", mode="edit",
                         assignment=_sticky_assignment(data, {"id": assignment_id}),
-                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list,
+                        employee_assignments=employee_assignments, current_assignment_id=assignment_id,
                     )
 
                 new_entity_code = next(e["code"] for e in entities if e["id"] == int(data["entity_id"]))
@@ -720,7 +792,8 @@ def edit_assignment(assignment_id):
                     return render_template(
                         "assignment_form.html", mode="edit",
                         assignment=_sticky_assignment(data, {"id": assignment_id}),
-                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list,
+                        employee_assignments=employee_assignments, current_assignment_id=assignment_id,
                     )
 
                 flash("Assignment updated.", "success")
@@ -732,8 +805,55 @@ def edit_assignment(assignment_id):
 
     return render_template(
         "assignment_form.html", mode="edit", assignment=assignment,
-        entities=entities, sites=sites, roles=roles, employees_list=employees_list
+        entities=entities, sites=sites, roles=roles, employees_list=employees_list,
+        employee_assignments=employee_assignments, current_assignment_id=assignment_id,
     )
+
+
+@app.route("/assignments/<int:assignment_id>/reassign", methods=["POST"])
+def reassign_assignment(assignment_id):
+    full_name = request.form.get("full_name", "").strip()
+    email = request.form.get("email", "").strip()
+    if not full_name or not email:
+        flash("Name and Email are required for reassign.", "error")
+        return redirect(url_for("assignments"))
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ua.full_name, e.code AS entity_code, r.name AS role_name
+                FROM user_assignments ua
+                JOIN entities e ON e.id = ua.entity_id
+                JOIN roles r ON r.id = ua.role_id
+                WHERE ua.id = %s
+                """,
+                (assignment_id,),
+            )
+            old_assignment = cur.fetchone()
+            if not old_assignment:
+                flash("Assignment not found.", "error")
+                return redirect(url_for("assignments"))
+            
+            try:
+                cur.execute(
+                    "UPDATE user_assignments SET full_name = %s, email = %s WHERE id = %s",
+                    (full_name, email, assignment_id)
+                )
+                log_change(
+                    conn, session["full_name"], "UPDATE", entity_code=old_assignment["entity_code"],
+                    field_changed=f"Reassign {old_assignment['role_name']}", 
+                    old_value=old_assignment["full_name"], new_value=full_name
+                )
+                conn.commit()
+                flash("Assignment successfully reassigned.", "success")
+            except Exception as e:
+                conn.rollback()
+                flash("Cannot reassign. It is possible the user is already assigned to this role in this entity/site.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("assignments"))
 
 
 @app.route("/assignments/<int:assignment_id>/delete", methods=["POST"])
@@ -781,6 +901,7 @@ def workpapers():
             cur.execute(
                 """
                 SELECT wu.id, wu.code, wu.project_name, wu.site_id,
+                       wu.status, wu.version_major, wu.version_minor, wu.version_patch,
                        e.code AS entity_code, e.name AS entity_name,
                        s.name AS site_name
                 FROM work_units wu
@@ -812,6 +933,7 @@ def workpaper_detail(code):
             cur.execute(
                 """
                 SELECT wu.id, wu.code, wu.project_name, wu.entity_id, wu.site_id,
+                       wu.status, wu.version_major, wu.version_minor, wu.version_patch,
                        e.code AS entity_code, e.name AS entity_name, e.exchange_rate_idr,
                        s.name AS site_name
                 FROM work_units wu
@@ -846,10 +968,9 @@ def workpaper_detail(code):
             cur.execute(
                 """
                 SELECT wr.id, wr.row_kind, wr.seq, wr.role_id, r.name AS level_label,
-                       wr.person_name, p.title AS position, wr.comment
+                       wr.person_name, wr.position, wr.comment
                 FROM workpaper_rows wr
                 LEFT JOIN roles r ON r.id = wr.role_id
-                LEFT JOIN positions p ON p.id = wr.position_id
                 WHERE wr.work_unit_id = %s
                 ORDER BY wr.seq
                 """,
@@ -927,6 +1048,15 @@ def workpaper_detail(code):
                 "SELECT code, project_name, site_id FROM work_units ORDER BY sort_order, code"
             )
             all_units = cur.fetchall()
+
+            cur.execute(
+                """SELECT id, version, bump_type, comment, author, created_at,
+                          (snapshot IS NOT NULL) AS has_snapshot,
+                          jsonb_array_length(COALESCE(changes, '[]'::jsonb)) AS change_count
+                   FROM workpaper_version_log WHERE work_unit_id=%s ORDER BY id DESC""",
+                (unit["id"],)
+            )
+            version_log = cur.fetchall()
     finally:
         conn.close()
 
@@ -938,8 +1068,264 @@ def workpaper_detail(code):
         "workpaper_detail.html",
         unit=unit, bands=bands, authority_rows=authority_rows,
         buyer_row=buyer_row, creator_row=creator_row,
-        matrix=matrix, ses=ses, all_units=all_units,
+        matrix=matrix, ses=ses, all_units=all_units, version_log=version_log,
     )
+
+
+def build_workpaper_snapshot(cur, unit_id):
+    """Freeze the current state of a workpaper into a self-contained JSON-able
+    dict (no FK references) so it keeps rendering correctly even if the
+    underlying roles/tiers/rows are later edited or deleted."""
+    cur.execute(
+        """
+        SELECT wu.code, wu.project_name, wu.entity_id, wu.site_id,
+               e.name AS entity_name, e.exchange_rate_idr,
+               s.name AS site_name
+        FROM work_units wu
+        JOIN entities e ON e.id = wu.entity_id
+        LEFT JOIN sites s ON s.id = wu.site_id
+        WHERE wu.id = %s
+        """,
+        (unit_id,),
+    )
+    unit = cur.fetchone()
+
+    cur.execute(
+        """
+        SELECT id, seq, min_usd, max_usd
+        FROM amount_tiers a
+        WHERE EXISTS (SELECT 1 FROM tier_entities WHERE tier_id = a.id AND entity_id = %s)
+          AND (%s IS NULL OR EXISTS (SELECT 1 FROM tier_sites WHERE tier_id = a.id AND site_id = %s))
+        ORDER BY seq
+        """,
+        (unit["entity_id"], unit["site_id"], unit["site_id"]),
+    )
+    bands = [
+        {"id": t["id"], "label": format_tier_label(t["min_usd"], t["max_usd"], unit["exchange_rate_idr"])}
+        for t in cur.fetchall()
+    ]
+
+    cur.execute(
+        """
+        SELECT wr.id, wr.row_kind, wr.role_id, wr.person_name, wr.comment,
+               r.name AS level_label, wr.position
+        FROM workpaper_rows wr
+        LEFT JOIN roles r ON r.id = wr.role_id
+        WHERE wr.work_unit_id = %s
+        ORDER BY wr.seq
+        """,
+        (unit_id,),
+    )
+    rows = cur.fetchall()
+
+    if unit["site_id"]:
+        cur.execute(
+            """
+            SELECT role_id, array_agg(DISTINCT full_name) AS names
+            FROM user_assignments
+            WHERE is_active = TRUE AND entity_id = %s AND site_id = %s
+            GROUP BY role_id
+            """,
+            (unit["entity_id"], unit["site_id"]),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT role_id, array_agg(DISTINCT full_name) AS names
+            FROM user_assignments
+            WHERE is_active = TRUE AND entity_id = %s
+            GROUP BY role_id
+            """,
+            (unit["entity_id"],),
+        )
+    active_users_by_role = {r["role_id"]: r["names"] for r in cur.fetchall()}
+
+    def resolve_name(row):
+        if row["role_id"] and row["role_id"] in active_users_by_role:
+            return " / ".join(active_users_by_role[row["role_id"]])
+        return row["person_name"]
+
+    cur.execute(
+        """
+        SELECT wa.row_id, wa.tier_id, wa.required
+        FROM workpaper_authority wa
+        JOIN workpaper_rows wr ON wr.id = wa.row_id
+        WHERE wr.work_unit_id = %s
+        """,
+        (unit_id,),
+    )
+    matrix = {(m["row_id"], m["tier_id"]): m["required"] for m in cur.fetchall()}
+
+    authority_rows = []
+    buyer_name = None
+    creator_name = None
+    for r in rows:
+        name = resolve_name(r)
+        if r["row_kind"] == "authority":
+            authority_rows.append({
+                "level_label": r["level_label"],
+                "name": name,
+                "position": r["position"],
+                "comment": r["comment"],
+                "checks": [bool(matrix.get((r["id"], b["id"]))) for b in bands],
+            })
+        elif r["row_kind"] == "buyer":
+            buyer_name = name
+        elif r["row_kind"] == "creator":
+            creator_name = name
+
+    cur.execute(
+        """
+        SELECT tier_id, creator_name, approver_name, creator_role_id, approver_role_id
+        FROM ses_entries
+        WHERE work_unit_id = %s
+        """,
+        (unit_id,),
+    )
+    ses_by_tier = {s["tier_id"]: s for s in cur.fetchall()}
+
+    ses_list = []
+    for b in bands:
+        s = ses_by_tier.get(b["id"])
+        creator = approver = None
+        if s:
+            creator = (
+                " / ".join(active_users_by_role[s["creator_role_id"]])
+                if s["creator_role_id"] and s["creator_role_id"] in active_users_by_role
+                else s["creator_name"]
+            )
+            approver = (
+                " / ".join(active_users_by_role[s["approver_role_id"]])
+                if s["approver_role_id"] and s["approver_role_id"] in active_users_by_role
+                else s["approver_name"]
+            )
+        ses_list.append({"band_label": b["label"], "creator": creator, "approver": approver})
+
+    return {
+        "code": unit["code"],
+        "project_name": unit["project_name"],
+        "entity_name": unit["entity_name"],
+        "site_name": unit["site_name"],
+        "bands": [b["label"] for b in bands],
+        "authority_rows": authority_rows,
+        "buyer_name": buyer_name,
+        "creator_name": creator_name,
+        "ses": ses_list,
+    }
+
+
+def _next_workpaper_version(unit, bump_type):
+    maj, minn, pat = unit["version_major"], unit["version_minor"], unit["version_patch"]
+    if bump_type == "major":
+        maj += 1; minn = 0; pat = 0
+    elif bump_type == "minor":
+        minn += 1; pat = 0
+    elif bump_type == "patch":
+        pat += 1
+    return maj, minn, pat, f"{maj}.{minn}.{pat}"
+
+
+def _band_short_label(band_label):
+    """Compact 'US$15k - US$80k' style text from a format_tier_label() dict,
+    for use in human-readable change descriptions."""
+    if not band_label:
+        return "?"
+    usd = band_label.get("usd", {})
+    if usd.get("op") == "<":
+        return f"< {usd.get('max')}"
+    if usd.get("op") == ">=":
+        return f">= {usd.get('min')}"
+    return f"{usd.get('min')} - {usd.get('max')}"
+
+
+def diff_workpaper_snapshots(old_snapshot, new_snapshot):
+    """Compare two build_workpaper_snapshot() outputs and return a flat list
+    of {section, field, old, new} dicts describing what changed. Rows are
+    matched by level_label (role name) on a best-effort basis since a
+    workpaper's row/band structure is dynamic, not a fixed set of columns."""
+    changes = []
+
+    if (old_snapshot.get("buyer_name") or None) != (new_snapshot.get("buyer_name") or None):
+        changes.append({
+            "section": "Buyer", "field": "Nama",
+            "old": old_snapshot.get("buyer_name"), "new": new_snapshot.get("buyer_name"),
+        })
+    if (old_snapshot.get("creator_name") or None) != (new_snapshot.get("creator_name") or None):
+        changes.append({
+            "section": "PR Creator", "field": "Nama",
+            "old": old_snapshot.get("creator_name"), "new": new_snapshot.get("creator_name"),
+        })
+
+    old_rows = {r["level_label"]: r for r in old_snapshot.get("authority_rows", [])}
+    new_rows = {r["level_label"]: r for r in new_snapshot.get("authority_rows", [])}
+    new_bands = new_snapshot.get("bands", [])
+    old_bands = old_snapshot.get("bands", [])
+
+    for label in old_rows.keys() - new_rows.keys():
+        old_r = old_rows[label]
+        active_bands = [
+            _band_short_label(old_bands[i])
+            for i, chk in enumerate(old_r.get("checks", [])) if chk and i < len(old_bands)
+        ]
+        old_val_str = "Baris ada"
+        if active_bands:
+            old_val_str += f" (otoritas: {', '.join(active_bands)})"
+        changes.append({"section": "Approval Matrix", "field": label, "old": old_val_str, "new": "Baris dihapus"})
+        
+    for label in new_rows.keys() - old_rows.keys():
+        new_r = new_rows[label]
+        active_bands = [
+            _band_short_label(new_bands[i])
+            for i, chk in enumerate(new_r.get("checks", [])) if chk and i < len(new_bands)
+        ]
+        new_val_str = "Baris ditambahkan"
+        if active_bands:
+            new_val_str += f" (otoritas: {', '.join(active_bands)})"
+        changes.append({"section": "Approval Matrix", "field": label, "old": "Baris belum ada", "new": new_val_str})
+
+    for label in old_rows.keys() & new_rows.keys():
+        old_r, new_r = old_rows[label], new_rows[label]
+        if (old_r.get("position") or None) != (new_r.get("position") or None):
+            changes.append({
+                "section": "Approval Matrix", "field": f"{label} - Posisi",
+                "old": old_r.get("position"), "new": new_r.get("position"),
+            })
+        if (old_r.get("comment") or None) != (new_r.get("comment") or None):
+            changes.append({
+                "section": "Approval Matrix", "field": f"{label} - Komentar",
+                "old": old_r.get("comment"), "new": new_r.get("comment"),
+            })
+        old_checks = old_r.get("checks", [])
+        new_checks = new_r.get("checks", [])
+        for i in range(max(len(old_checks), len(new_checks))):
+            ov = old_checks[i] if i < len(old_checks) else None
+            nv = new_checks[i] if i < len(new_checks) else None
+            if ov != nv:
+                band = new_bands[i] if i < len(new_bands) else (old_bands[i] if i < len(old_bands) else None)
+                changes.append({
+                    "section": "Approval Matrix", "field": f"{label} - {_band_short_label(band)}",
+                    "old": "Y" if ov else "N", "new": "Y" if nv else "N",
+                })
+
+    old_ses = old_snapshot.get("ses", [])
+    new_ses = new_snapshot.get("ses", [])
+    for i in range(max(len(old_ses), len(new_ses))):
+        old_s = old_ses[i] if i < len(old_ses) else {}
+        new_s = new_ses[i] if i < len(new_ses) else {}
+        band = (new_s or {}).get("band_label") or (old_s or {}).get("band_label")
+        band_desc = _band_short_label(band)
+        if (old_s.get("creator") or None) != (new_s.get("creator") or None):
+            changes.append({
+                "section": "SES", "field": f"{band_desc} - Creator",
+                "old": old_s.get("creator"), "new": new_s.get("creator"),
+            })
+        if (old_s.get("approver") or None) != (new_s.get("approver") or None):
+            changes.append({
+                "section": "SES", "field": f"{band_desc} - Approver",
+                "old": old_s.get("approver"), "new": new_s.get("approver"),
+            })
+
+    return changes
 
 
 def _process_workpaper_form(cur, request_form, unit_id):
@@ -1062,15 +1448,26 @@ def new_workpaper():
                 site_id = request.form.get("site_id") or None
                 code = request.form.get("code")
                 project_name = request.form.get("project_name")
+                status = request.form.get("status", "draft")
                 
                 try:
                     cur.execute(
-                        "INSERT INTO work_units (entity_id, site_id, code, project_name) VALUES (%s, %s, %s, %s) RETURNING id",
-                        (entity_id, site_id, code, project_name)
+                        """INSERT INTO work_units (entity_id, site_id, code, project_name, status,
+                           version_major, version_minor, version_patch)
+                           VALUES (%s, %s, %s, %s, %s, 1, 0, 0) RETURNING id""",
+                        (entity_id, site_id, code, project_name, status)
                     )
                     unit_id = cur.fetchone()["id"]
-                    
+
                     _process_workpaper_form(cur, request.form, unit_id)
+
+                    entity_code = next((e["code"] for e in entities if str(e["id"]) == str(entity_id)), None)
+                    log_change(
+                        conn, session["full_name"], "CREATE", entity_code=entity_code,
+                        field_changed=None, old_value=None,
+                        new_value=f"{code} - {project_name}",
+                    )
+
                     conn.commit()
                     flash("Kertas kerja berhasil dibuat.", "success")
                     return redirect(url_for("workpaper_detail", code=code))
@@ -1121,15 +1518,92 @@ def edit_workpaper(code):
                 site_id = request.form.get("site_id") or None
                 new_code = request.form.get("code")
                 project_name = request.form.get("project_name")
-                
+                status = request.form.get("status", unit.get("status", "draft"))
+                bump_type = request.form.get("bump_type") or "none"
+                bump_comment = request.form.get("bump_comment", "").strip()
+
                 try:
+                    new_entity_code = next((e["code"] for e in entities if str(e["id"]) == str(entity_id)), None)
+                    new_site_name = next(
+                        (s["name"] for s in sites if str(s["id"]) == str(site_id)), None
+                    ) if site_id else None
+                    old_entity_code = next((e["code"] for e in entities if e["id"] == unit["entity_id"]), None)
+                    old_site_name = next(
+                        (s["name"] for s in sites if s["id"] == unit["site_id"]), None
+                    ) if unit["site_id"] else None
+
+                    diffs = []
+                    if unit["code"] != new_code:
+                        diffs.append(("code", unit["code"], new_code))
+                    if unit["project_name"] != project_name:
+                        diffs.append(("project_name", unit["project_name"], project_name))
+                    if (unit.get("status") or "draft") != status:
+                        diffs.append(("status", unit.get("status"), status))
+                    if old_entity_code != new_entity_code:
+                        diffs.append(("entity", old_entity_code, new_entity_code))
+                    if (old_site_name or None) != (new_site_name or None):
+                        diffs.append(("site", old_site_name, new_site_name))
+
+                    old_snapshot = build_workpaper_snapshot(cur, unit["id"])
+
                     cur.execute(
-                        "UPDATE work_units SET entity_id=%s, site_id=%s, code=%s, project_name=%s WHERE id=%s",
-                        (entity_id, site_id, new_code, project_name, unit["id"])
+                        "UPDATE work_units SET entity_id=%s, site_id=%s, code=%s, project_name=%s, status=%s WHERE id=%s",
+                        (entity_id, site_id, new_code, project_name, status, unit["id"])
                     )
                     _process_workpaper_form(cur, request.form, unit["id"])
+
+                    new_snapshot = build_workpaper_snapshot(cur, unit["id"])
+                    content_diffs = diff_workpaper_snapshots(old_snapshot, new_snapshot)
+                    all_changes = [
+                        {"section": "Info Dasar", "field": field, "old": old_value, "new": new_value}
+                        for field, old_value, new_value in diffs
+                    ] + content_diffs
+
+                    if diffs:
+                        for field, old_value, new_value in diffs:
+                            log_change(
+                                conn, session["full_name"], "UPDATE", entity_code=new_entity_code,
+                                field_changed=field,
+                                old_value=str(old_value) if old_value is not None else None,
+                                new_value=str(new_value) if new_value is not None else None,
+                            )
+                    else:
+                        log_change(
+                            conn, session["full_name"], "UPDATE", entity_code=new_entity_code,
+                            field_changed="Kertas Kerja",
+                            old_value=None,
+                            new_value=(
+                                f"{new_code} - {len(content_diffs)} perubahan pada matrix/SES/buyer/creator"
+                                if content_diffs else f"{new_code} - tidak ada perubahan konten"
+                            ),
+                        )
+
+                    # Detailed per-field diff always attaches to the workpaper's own
+                    # version log (not the shared changelog table, which stays light).
+                    is_real_bump = bump_type in ("major", "minor", "patch")
+                    if is_real_bump:
+                        maj, minn, pat, new_ver = _next_workpaper_version(unit, bump_type)
+                        cur.execute(
+                            "UPDATE work_units SET version_major=%s, version_minor=%s, version_patch=%s WHERE id=%s",
+                            (maj, minn, pat, unit["id"])
+                        )
+                    else:
+                        new_ver = f"{unit['version_major']}.{unit['version_minor']}.{unit['version_patch']}"
+
+                    if all_changes or is_real_bump:
+                        cur.execute(
+                            """INSERT INTO workpaper_version_log
+                               (work_unit_id, version, bump_type, comment, author, snapshot, changes)
+                               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                            (unit["id"], new_ver, bump_type, bump_comment or None,
+                             session["full_name"], Json(new_snapshot), Json(all_changes))
+                        )
+
                     conn.commit()
-                    flash("Kertas kerja berhasil diperbarui.", "success")
+                    flash(
+                        "Kertas kerja berhasil diperbarui." + (f" Versi dinaikkan ke v{new_ver}." if is_real_bump else ""),
+                        "success",
+                    )
                     return redirect(url_for("workpaper_detail", code=new_code))
                 except Exception as e:
                     conn.rollback()
@@ -1180,7 +1654,27 @@ def delete_workpaper(unit_id):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT wu.code, wu.project_name, e.code AS entity_code
+                FROM work_units wu
+                JOIN entities e ON e.id = wu.entity_id
+                WHERE wu.id = %s
+                """,
+                (unit_id,),
+            )
+            existing = cur.fetchone()
+            if not existing:
+                flash("Kertas kerja tidak ditemukan.", "error")
+                return redirect(url_for("workpapers"))
+
             cur.execute("DELETE FROM work_units WHERE id = %s", (unit_id,))
+            log_change(
+                conn, session["full_name"], "DELETE", entity_code=existing["entity_code"],
+                field_changed=None,
+                old_value=f"{existing['code']} - {existing['project_name']}",
+                new_value=None,
+            )
             conn.commit()
             flash("Kertas kerja berhasil dihapus.", "success")
     except Exception as e:
@@ -1189,6 +1683,88 @@ def delete_workpaper(unit_id):
     finally:
         conn.close()
     return redirect(url_for("workpapers"))
+
+
+@app.route("/workpapers/<int:unit_id>/version-bump", methods=["POST"])
+def workpaper_version_bump(unit_id):
+    bump_type = request.form.get("bump_type")   # 'major','minor','patch'
+    comment   = request.form.get("comment", "").strip()
+    if bump_type not in ("major", "minor", "patch"):
+        flash("Invalid bump type.", "error")
+        return redirect(url_for("workpapers"))
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT wu.*, e.code AS entity_code
+                FROM work_units wu
+                JOIN entities e ON e.id = wu.entity_id
+                WHERE wu.id = %s
+                """,
+                (unit_id,),
+            )
+            unit = cur.fetchone()
+            if not unit:
+                flash("Workpaper not found.", "error")
+                return redirect(url_for("workpapers"))
+
+            old_ver = f"{unit['version_major']}.{unit['version_minor']}.{unit['version_patch']}"
+            maj, minn, pat, new_ver = _next_workpaper_version(unit, bump_type)
+
+            cur.execute(
+                "UPDATE work_units SET version_major=%s, version_minor=%s, version_patch=%s WHERE id=%s",
+                (maj, minn, pat, unit_id)
+            )
+            snapshot = build_workpaper_snapshot(cur, unit_id)
+            cur.execute(
+                """INSERT INTO workpaper_version_log (work_unit_id, version, bump_type, comment, author, snapshot)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (unit_id, new_ver, bump_type, comment, session.get("full_name", "System"), Json(snapshot))
+            )
+            log_change(
+                conn, session.get("full_name", "System"), "UPDATE", entity_code=unit["entity_code"],
+                field_changed=f"version ({bump_type})",
+                old_value=old_ver,
+                new_value=f"{new_ver}: {comment}" if comment else new_ver,
+            )
+            conn.commit()
+            flash(f"Version bumped to {new_ver}.", "success")
+            return redirect(url_for("workpaper_detail", code=unit["code"]))
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error: {e}", "error")
+        return redirect(url_for("workpapers"))
+    finally:
+        conn.close()
+
+
+@app.route("/workpapers/<code>/version/<int:log_id>")
+def workpaper_version_snapshot(code, log_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT vl.id, vl.version, vl.bump_type, vl.comment, vl.author, vl.created_at,
+                       vl.snapshot, vl.changes
+                FROM workpaper_version_log vl
+                JOIN work_units wu ON wu.id = vl.work_unit_id
+                WHERE vl.id = %s AND wu.code = %s
+                """,
+                (log_id, code),
+            )
+            log = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not log or not log["snapshot"]:
+        flash("Snapshot untuk versi ini tidak tersedia (dibuat sebelum fitur ini ada).", "error")
+        return redirect(url_for("workpaper_detail", code=code))
+
+    return render_template("workpaper_version_snapshot.html", code=code, log=log, snapshot=log["snapshot"])
+
 
 # ---------- Changelog ----------
 
@@ -1239,7 +1815,15 @@ def entities_list():
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM entities ORDER BY code")
+            cur.execute("""
+                SELECT e.*, 
+                       array_to_string(array_agg(s.name ORDER BY s.name), ', ') as site_names 
+                FROM entities e
+                LEFT JOIN entity_sites es ON es.entity_id = e.id
+                LEFT JOIN sites s ON s.id = es.site_id
+                GROUP BY e.id
+                ORDER BY e.code
+            """)
             entities = cur.fetchall()
     finally:
         conn.close()
@@ -1247,28 +1831,36 @@ def entities_list():
 
 @app.route("/entities/new", methods=["GET", "POST"])
 def new_entity():
-    if request.method == "POST":
-        code = request.form.get("code", "").strip().upper()
-        name = request.form.get("name", "").strip()
-        exchange_rate_idr = request.form.get("exchange_rate_idr", 16000)
-        
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO entities (code, name, exchange_rate_idr) VALUES (%s, %s, %s)",
-                    (code, name, exchange_rate_idr)
-                )
-                log_change(conn, session["full_name"], "CREATE", entity_code=code, field_changed="Entity", old_value=None, new_value=name)
-                conn.commit()
-                flash("Entity created successfully.", "success")
-                return redirect(url_for("entities_list"))
-        except Exception as e:
-            conn.rollback()
-            flash("Error creating entity. Code might already exist.", "error")
-        finally:
-            conn.close()
-    return render_template("entity_form.html", mode="create", entity=None)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM sites ORDER BY name")
+            sites = cur.fetchall()
+            if request.method == "POST":
+                code = request.form.get("code", "").strip().upper()
+                name = request.form.get("name", "").strip()
+                exchange_rate_idr = request.form.get("exchange_rate_idr", 16000)
+                site_ids = request.form.getlist("site_id")
+                try:
+                    cur.execute(
+                        "INSERT INTO entities (code, name, exchange_rate_idr) VALUES (%s, %s, %s) RETURNING id",
+                        (code, name, exchange_rate_idr)
+                    )
+                    new_entity_id = cur.fetchone()["id"]
+                    
+                    for s_id in site_ids:
+                        cur.execute("INSERT INTO entity_sites (entity_id, site_id) VALUES (%s, %s)", (new_entity_id, s_id))
+                        
+                    log_change(conn, session["full_name"], "CREATE", entity_code=code, field_changed="Entity", old_value=None, new_value=name)
+                    conn.commit()
+                    flash("Entity created successfully.", "success")
+                    return redirect(url_for("entities_list"))
+                except Exception as e:
+                    conn.rollback()
+                    flash("Error creating entity. Code might already exist.", "error")
+    finally:
+        conn.close()
+    return render_template("entity_form.html", mode="create", entity=None, sites=sites)
 
 @app.route("/entities/<int:entity_id>/edit", methods=["GET", "POST"])
 def edit_entity(entity_id):
@@ -1280,16 +1872,26 @@ def edit_entity(entity_id):
             if not entity:
                 flash("Entity not found.", "error")
                 return redirect(url_for("entities_list"))
+            cur.execute("SELECT site_id FROM entity_sites WHERE entity_id = %s", (entity_id,))
+            entity_sites = [row["site_id"] for row in cur.fetchall()]
+            
+            cur.execute("SELECT id, name FROM sites ORDER BY name")
+            sites = cur.fetchall()
             
             if request.method == "POST":
                 code = request.form.get("code", "").strip().upper()
                 name = request.form.get("name", "").strip()
                 exchange_rate_idr = request.form.get("exchange_rate_idr", 16000)
+                site_ids = request.form.getlist("site_id")
                 try:
                     cur.execute(
                         "UPDATE entities SET code=%s, name=%s, exchange_rate_idr=%s WHERE id=%s",
                         (code, name, exchange_rate_idr, entity_id)
                     )
+                    cur.execute("DELETE FROM entity_sites WHERE entity_id=%s", (entity_id,))
+                    for s_id in site_ids:
+                        cur.execute("INSERT INTO entity_sites (entity_id, site_id) VALUES (%s, %s)", (entity_id, s_id))
+                        
                     log_change(conn, session["full_name"], "UPDATE", entity_code=code, field_changed="Entity details", old_value=entity["name"], new_value=name)
                     conn.commit()
                     flash("Entity updated.", "success")
@@ -1299,7 +1901,7 @@ def edit_entity(entity_id):
                     flash("Error updating entity.", "error")
     finally:
         conn.close()
-    return render_template("entity_form.html", mode="edit", entity=entity)
+    return render_template("entity_form.html", mode="edit", entity=entity, sites=sites, entity_sites=entity_sites)
 
 @app.route("/entities/<int:entity_id>/delete", methods=["POST"])
 def delete_entity(entity_id):
@@ -1329,9 +1931,13 @@ def sites_list():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT s.id, s.name, e.code as entity_code 
-                FROM sites s JOIN entities e ON s.entity_id = e.id 
-                ORDER BY e.code, s.name
+                SELECT s.id, s.name, 
+                       array_to_string(array_agg(e.code ORDER BY e.code), ', ') as entity_code 
+                FROM sites s 
+                LEFT JOIN entity_sites es ON es.site_id = s.id
+                LEFT JOIN entities e ON e.id = es.entity_id 
+                GROUP BY s.id, s.name
+                ORDER BY s.name
             """)
             sites = cur.fetchall()
     finally:
@@ -1346,12 +1952,16 @@ def new_site():
             cur.execute("SELECT id, code, name FROM entities ORDER BY code")
             entities = cur.fetchall()
             if request.method == "POST":
-                entity_id = request.form.get("entity_id")
+                entity_ids = request.form.getlist("entity_id")
                 name = request.form.get("name", "").strip()
                 try:
-                    cur.execute("INSERT INTO sites (entity_id, name) VALUES (%s, %s)", (entity_id, name))
-                    e_code = next(e["code"] for e in entities if str(e["id"]) == str(entity_id))
-                    log_change(conn, session["full_name"], "CREATE", entity_code=e_code, field_changed="Site", old_value=None, new_value=name)
+                    cur.execute("INSERT INTO sites (name) VALUES (%s) RETURNING id", (name,))
+                    new_site_id = cur.fetchone()["id"]
+                    for e_id in entity_ids:
+                        cur.execute("INSERT INTO entity_sites (entity_id, site_id) VALUES (%s, %s)", (e_id, new_site_id))
+                    
+                    e_codes = [e["code"] for e in entities if str(e["id"]) in entity_ids]
+                    log_change(conn, session["full_name"], "CREATE", entity_code=", ".join(e_codes), field_changed="Site", old_value=None, new_value=name)
                     conn.commit()
                     flash("Site created.", "success")
                     return redirect(url_for("sites_list"))
@@ -1373,16 +1983,23 @@ def edit_site(site_id):
                 flash("Site not found.", "error")
                 return redirect(url_for("sites_list"))
             
+            cur.execute("SELECT entity_id FROM entity_sites WHERE site_id = %s", (site_id,))
+            site_entities = [row["entity_id"] for row in cur.fetchall()]
+            
             cur.execute("SELECT id, code, name FROM entities ORDER BY code")
             entities = cur.fetchall()
             
             if request.method == "POST":
-                entity_id = request.form.get("entity_id")
+                entity_ids = request.form.getlist("entity_id")
                 name = request.form.get("name", "").strip()
                 try:
-                    cur.execute("UPDATE sites SET entity_id=%s, name=%s WHERE id=%s", (entity_id, name, site_id))
-                    e_code = next(e["code"] for e in entities if str(e["id"]) == str(entity_id))
-                    log_change(conn, session["full_name"], "UPDATE", entity_code=e_code, field_changed="Site", old_value=site["name"], new_value=name)
+                    cur.execute("UPDATE sites SET name=%s WHERE id=%s", (name, site_id))
+                    cur.execute("DELETE FROM entity_sites WHERE site_id=%s", (site_id,))
+                    for e_id in entity_ids:
+                        cur.execute("INSERT INTO entity_sites (entity_id, site_id) VALUES (%s, %s)", (e_id, site_id))
+                    
+                    e_codes = [e["code"] for e in entities if str(e["id"]) in entity_ids]
+                    log_change(conn, session["full_name"], "UPDATE", entity_code=", ".join(e_codes), field_changed="Site", old_value=site["name"], new_value=name)
                     conn.commit()
                     flash("Site updated.", "success")
                     return redirect(url_for("sites_list"))
@@ -1391,14 +2008,21 @@ def edit_site(site_id):
                     flash("Error updating site.", "error")
     finally:
         conn.close()
-    return render_template("site_form.html", mode="edit", site=site, entities=entities)
+    return render_template("site_form.html", mode="edit", site=site, entities=entities, site_entities=site_entities)
 
 @app.route("/sites/<int:site_id>/delete", methods=["POST"])
 def delete_site(site_id):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT s.*, e.code as e_code FROM sites s JOIN entities e ON s.entity_id=e.id WHERE s.id = %s", (site_id,))
+            cur.execute("""
+                SELECT s.*, array_to_string(array_agg(e.code), ', ') as e_code 
+                FROM sites s 
+                LEFT JOIN entity_sites es ON es.site_id = s.id
+                LEFT JOIN entities e ON e.id = es.entity_id 
+                WHERE s.id = %s
+                GROUP BY s.id
+            """, (site_id,))
             site = cur.fetchone()
             if site:
                 cur.execute("DELETE FROM sites WHERE id = %s", (site_id,))
@@ -1444,10 +2068,22 @@ def edit_employee():
                     except Exception as e:
                         conn.rollback()
                         flash("Error updating employee records. Email might conflict with another existing user.", "error")
+
+            # Fetch all assignments for display
+            cur.execute("""
+                SELECT e.code as entity_code, s.name as site_name, r.name as role_name, ua.is_active
+                FROM user_assignments ua
+                JOIN entities e ON e.id = ua.entity_id
+                JOIN roles r ON r.id = ua.role_id
+                LEFT JOIN sites s ON s.id = ua.site_id
+                WHERE ua.email = %s
+                ORDER BY e.code, s.name, r.name
+            """, (old_email,))
+            assignments = cur.fetchall()
     finally:
         conn.close()
 
-    return render_template("employee_form.html", employee=emp)
+    return render_template("employee_form.html", employee=emp, assignments=assignments)
 
 @app.route("/employees/delete", methods=["POST"])
 def delete_employee():

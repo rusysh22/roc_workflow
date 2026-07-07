@@ -55,8 +55,6 @@
     color: #ef4444 !important;
   }
 </style>
-<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 <script>
 $(document).ready(function() {
@@ -80,8 +78,19 @@ $(document).ready(function() {
                     }
                     var uniqueValues = new Set();
                     api.column(colIdx).data().each(function (d) {
-                        var text = $('<div>').html(d).text().trim();
-                        if(text && text !== '-') uniqueValues.add(text);
+                        var $cell = $('<div>').html(d);
+                        var values = [];
+                        if ($cell.find('.filter-val').length > 0) {
+                            $cell.find('.filter-val').each(function() {
+                                values.push($(this).text().trim());
+                            });
+                        } else {
+                            values.push($cell.text().trim());
+                        }
+                        
+                        values.forEach(function(text) {
+                            if(text && text !== '-') uniqueValues.add(text);
+                        });
                     });
 
                     var select = $('<select multiple="multiple" data-placeholder="Filter ' + title + '"></select>')

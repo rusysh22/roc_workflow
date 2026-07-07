@@ -20,7 +20,15 @@
       {% for s in sites %}
       <tr>
         <td class="px-4 py-2 font-medium">
-          <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ entity_badge_class(s.entity_code) }}">{{ s.entity_code }}</span>
+          <div class="flex flex-wrap gap-1">
+            {% if s.entity_code %}
+              {% for code in s.entity_code.split(', ') %}
+                <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ entity_badge_class(code) }}">{{ code }}</span>
+              {% endfor %}
+            {% else %}
+              <span class="text-gray-400 italic text-xs">No Entity</span>
+            {% endif %}
+          </div>
         </td>
         <td class="px-4 py-2">
           <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ string_badge_class(s.name) }}">{{ s.name }}</span>

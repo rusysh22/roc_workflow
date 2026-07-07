@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% macro render_band(bobj, is_usd=True) %}
+  <div class="flex items-center gap-1 whitespace-nowrap {{ 'font-bold text-gray-800 text-[11px]' if is_usd else 'font-medium text-black text-[10px]' }}">
+    {% if bobj.op == '<' %}
+      <span class="text-gray-400 font-normal tracking-tighter">&lt;</span>
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.max }}</span>
+    {% elif bobj.op == '>=' %}
+      <span class="text-gray-400 font-normal tracking-tighter">&ge;</span>
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.min }}</span>
+    {% else %}
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.min }}</span>
+      <span class="text-gray-400 font-normal tracking-tighter">- &lt;</span>
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.max }}</span>
+    {% endif %}
+  </div>
+{% endmacro %}
+{% block title %}{{ snapshot.code }} — v{{ log.version }} (Historis){% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-3 no-print">
+  <a href="{{ url_for('workpaper_detail', code=code) }}" class="text-sm text-gray-500 hover:text-gray-800">&larr; Kembali ke versi terkini</a>
+  <button onclick="window.print()" class="text-sm border border-gray-300 rounded-md px-3 py-1 hover:bg-gray-100">Print / PDF</button>
+</div>
+
+<div class="mb-5 no-print rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
+  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+  </svg>
+  <div class="text-sm text-amber-800">
+    <span class="font-semibold">Snapshot Historis &mdash; v{{ log.version }}</span>
+    <span class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold ml-1
+      {{ 'bg-red-100 text-red-700' if log.bump_type == 'major' else
+         ('bg-blue-100 text-blue-700' if log.bump_type == 'minor' else
+          'bg-gray-100 text-gray-600') }}">{{ log.bump_type }}</span>
+    <span class="block text-xs text-amber-700 mt-0.5">
+      {{ log.comment or '(tidak ada komentar)' }} &mdash; oleh {{ log.author }} pada
+      {{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}
+    </span>
+  </div>
+</div>
+
+{% if log.changes %}
+<div class="mb-5 no-print border border-gray-200 rounded-lg bg-white overflow-hidden">
+  <div class="px-4 py-2.5 text-sm font-semibold text-gray-700 border-b border-gray-100">
+    Perubahan pada versi ini ({{ log.changes|length }})
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs border-collapse">
+      <thead>
+        <tr class="bg-gray-50 text-gray-600">
+          <th class="px-3 py-2 text-left w-32">Bagian</th>
+          <th class="px-3 py-2 text-left w-48">Field</th>
+          <th class="px-3 py-2 text-left">Nilai Lama</th>
+          <th class="px-3 py-2 text-left">Nilai Baru</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for c in log.changes %}
+        <tr>
+          <td class="px-3 py-2 text-gray-500">{{ c.section }}</td>
+          <td class="px-3 py-2 font-medium text-gray-800">{{ c.field }}</td>
+          <td class="px-3 py-2 text-red-600">{{ c.old or '-' }}</td>
+          <td class="px-3 py-2 text-green-700">{{ c.new or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="bg-white border border-gray-300 rounded-lg overflow-hidden print-sheet relative z-0">
+
+  <!-- Header -->
+  <div class="grid grid-cols-2 border-b border-gray-300 text-sm">
+    <div class="px-4 py-2 border-r border-gray-300">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Nama Entitas / Company Name</span>
+      <div class="font-semibold text-gray-900">{{ snapshot.entity_name }}</div>
+    </div>
+    <div class="px-4 py-2">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Proyek / Project</span>
+      <div class="font-semibold text-gray-900">{{ snapshot.site_name or snapshot.project_name }}</div>
+    </div>
+  </div>
+
+  <!-- PR matrix -->
+  <div class="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-700">
+    Purchase Request per event
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs border-collapse">
+      <thead>
+        <tr class="bg-gray-100 text-gray-700">
+          <th class="border border-gray-300 px-2 py-1 text-left w-40">Level / Tingkat</th>
+          <th class="border border-gray-300 px-2 py-1 text-left">Name / Nama</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-52">Position</th>
+          {% for b in snapshot.bands %}
+            <th class="border border-gray-300 px-1 py-1 align-bottom h-52 w-16 bg-white">
+              <div class="w-full flex justify-center pb-2">
+                <div class="[writing-mode:vertical-rl] rotate-180 text-left">
+                  <div class="mb-2">{{ render_band(b.usd, true) }}</div>
+                  <div>{{ render_band(b.idr, false) }}</div>
+                </div>
+              </div>
+            </th>
+          {% endfor %}
+          <th class="border border-gray-300 px-2 py-1 text-left w-48">Comment / Komentar</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in snapshot.authority_rows %}
+        <tr>
+          <td class="border border-gray-300 px-2 py-1 font-bold">{{ r.level_label }}</td>
+          <td class="border border-gray-300 px-2 py-1">
+            {% if r.name %}{{ r.name | bold_slash }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+          </td>
+          <td class="border border-gray-300 px-2 py-1 text-gray-600">{{ r.position or '' }}</td>
+          {% for check in r.checks %}
+            <td class="border border-gray-300 px-1 py-1 text-center
+                       {{ 'bg-green-200 text-green-900 font-bold' if check else 'text-gray-300' }}">
+              {{ 'Y' if check else 'N' }}
+            </td>
+          {% endfor %}
+          <td class="border border-gray-300 px-2 py-1 text-[10px] text-gray-600">{{ r.comment or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Buyer & Creator -->
+  <div class="grid grid-cols-1 gap-px bg-gray-300 border-t border-gray-300 text-xs">
+    <div class="bg-white px-4 py-2">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500 font-bold">Buyer</span>
+      <div class="text-gray-900">
+        {% if snapshot.buyer_name %}{{ snapshot.buyer_name | bold_slash }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+      </div>
+    </div>
+    <div class="bg-white px-4 py-2">
+      <span class="text-[11px] uppercase tracking-wide text-gray-500 font-bold">Purchase Request Creator</span>
+      <div class="text-gray-900">
+        {% if snapshot.creator_name %}{{ snapshot.creator_name | bold_slash }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- SES -->
+  <div class="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-700 border-t border-gray-300">
+    Service Entry Sheet (SES)
+  </div>
+  <div class="overflow-x-auto pb-3">
+    <table class="w-full text-xs border-collapse">
+      <thead>
+        <tr class="bg-gray-100 text-gray-700">
+          <th class="border border-gray-300 px-2 py-1 text-left">Nominal / Threshold</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-1/3">SES Creator</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-1/3">SES Approver</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in snapshot.ses %}
+        <tr>
+          <td class="border border-gray-300 px-2 py-1">
+            <div class="mb-1">{{ render_band(s.band_label.usd, true) }}</div>
+            <div>{{ render_band(s.band_label.idr, false) }}</div>
+          </td>
+          <td class="border border-gray-300 px-2 py-1">
+            {% if s.creator %}{{ s.creator | bold_slash }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+          </td>
+          <td class="border border-gray-300 px-2 py-1">
+            {% if s.approver %}{{ s.approver | bold_slash }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+  @media print {
+    @page { size: landscape; margin: 10mm; }
+    body { background-color: white !important; }
+    .no-print { display: none !important; }
+    nav { display: none !important; }
+    .print-sheet { border: none !important; box-shadow: none !important; }
+  }
+</style>
+{% endblock %}

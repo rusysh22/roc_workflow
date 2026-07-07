@@ -3,13 +3,14 @@
 {% block content %}
 <h1 class="text-xl font-semibold mb-4">{{ 'Edit Assignment' if mode == 'edit' else 'Add Assignment' }}</h1>
 
+<div class="flex flex-col lg:flex-row gap-6 items-start">
 <form method="post"
-      class="space-y-4 max-w-lg"
+      class="flex-1 space-y-4 min-w-0"
       action="{{ url_for('edit_assignment', assignment_id=assignment.id) if mode == 'edit' else url_for('new_assignment') }}">
 
   <div class="mb-4">
     <label class="block text-sm font-medium mb-1">Select Employee</label>
-    <select id="employee_selector" class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+    <select id="employee_selector" class="searchable-select w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
       <option value="">-- Type New Employee --</option>
       {% for emp in employees_list %}
         <option value="{{ emp.email }}" data-name="{{ emp.full_name }}" 
@@ -38,10 +39,10 @@
   <div>
     <label class="block text-sm font-medium mb-1">Entity</label>
     <select name="entity_id" id="entity_id" required
-            class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+            class="searchable-select w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
       <option value="">-- Select Entity --</option>
       {% for e in entities %}
-        <option value="{{ e.id }}" {% if assignment.entity_id == e.id %}selected{% endif %}>{{ e.code }} - {{ e.name }}</option>
+        <option value="{{ e.id }}" {% if assignment and assignment.entity_id == e.id %}selected{% endif %}>{{ e.code }} - {{ e.name }}</option>
       {% endfor %}
     </select>
   </div>
@@ -49,11 +50,11 @@
   <div>
     <label class="block text-sm font-medium mb-1">Role</label>
     <select name="role_id" id="role_id" required
-            class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+            class="searchable-select w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
       <option value="">-- Select Role --</option>
       {% for r in roles %}
         <option value="{{ r.id }}" data-centralized="{{ '1' if r.is_centralized else '0' }}"
-                {% if assignment.role_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                {% if assignment and assignment.role_id == r.id %}selected{% endif %}>{{ r.name }}</option>
       {% endfor %}
     </select>
   </div>
@@ -61,15 +62,15 @@
   <div id="site_field">
     <label class="block text-sm font-medium mb-1">Site</label>
     <select name="site_id" id="site_id"
-            class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
-      <option value="">-- Select Site --</option>
+            class="searchable-select w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+      <option value="">-- All Sites --</option>
       {% for s in sites %}
         <option value="{{ s.id }}" data-entity="{{ s.entity_code }}"
-                {% if assignment.site_id == s.id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
+                {% if assignment and assignment.site_id == s.id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
       {% endfor %}
     </select>
-    <p id="centralized_note" class="text-xs text-gray-500 mt-1 hidden">
-      Buyer &amp; Cost Reviewer are centralized at HO Jakarta — site is set automatically.
+    <p id="site_note" class="text-xs mt-1 hidden">
+      <span class="text-blue-600 font-medium">All Site/Unit Applied</span> <span class="text-gray-500">— Assignment applies to all sites for the selected entity.</span>
     </p>
   </div>
 
@@ -88,66 +89,105 @@
   </div>
 </form>
 
+<div class="w-full lg:w-80 shrink-0 bg-white border border-gray-200 rounded-lg p-4">
+  <h3 class="text-sm font-semibold text-gray-700 mb-1">Assigned Elsewhere</h3>
+  <p class="text-xs text-gray-400 mb-3">Where this employee already has other assignments.</p>
+  <div id="employee_assignments_panel" class="space-y-2 text-sm">
+    <p class="text-xs text-gray-400 italic">Select or type an employee to see their other assignments.</p>
+  </div>
+</div>
+</div>
+
+{% include 'select2_form_init.html' %}
 <script>
-  var entitySelect = document.getElementById('entity_id');
-  var roleSelect = document.getElementById('role_id');
-  var siteSelect = document.getElementById('site_id');
-  var centralizedNote = document.getElementById('centralized_note');
-  var siteOptions = Array.prototype.slice.call(siteSelect.options);
+$(document).ready(function() {
+  var $entity  = $('#entity_id');
+  var $role    = $('#role_id');
+  var $site    = $('#site_id');
+  var $empSel  = $('#employee_selector');
+  var $nameIn  = $('#full_name');
+  var $emailIn = $('#email');
+  var $siteNote = $('#site_note');
 
-  function isCentralized() {
-    var opt = roleSelect.options[roleSelect.selectedIndex];
-    return !!opt && opt.dataset.centralized === '1';
-  }
-
+  // --- Site filter by entity ---
   function filterSitesByEntity() {
-    var entityOpt = entitySelect.options[entitySelect.selectedIndex];
-    var entityCode = entityOpt ? entityOpt.textContent.split(' - ')[0] : '';
-    siteOptions.forEach(function (opt) {
-      if (!opt.value) { opt.hidden = false; return; }
-      opt.hidden = !!entityCode && opt.dataset.entity !== entityCode;
+    var entityCode = $entity.find('option:selected').text().split(' - ')[0].trim();
+    $site.find('option').each(function() {
+      var $opt = $(this);
+      if (!$opt.val()) { $opt.prop('hidden', false); return; }
+      $opt.prop('hidden', !!entityCode && $opt.data('entity') !== entityCode);
     });
+    // Refresh Select2 dropdown list
+    $site.trigger('change.select2');
   }
 
-  function applyCentralizedRule() {
-    if (isCentralized()) {
-      siteSelect.disabled = true;
-      centralizedNote.classList.remove('hidden');
+  function toggleSiteNote() {
+    if (!$site.val()) {
+      $siteNote.removeClass('hidden');
     } else {
-      siteSelect.disabled = false;
-      centralizedNote.classList.add('hidden');
+      $siteNote.addClass('hidden');
     }
   }
 
-  var employeeSelect = document.getElementById('employee_selector');
-  var fullNameInput = document.getElementById('full_name');
-  var emailInput = document.getElementById('email');
+  $site.on('change', toggleSiteNote);
 
+  // --- Employee selector ---
   function updateEmployeeFields() {
-    var opt = employeeSelect.options[employeeSelect.selectedIndex];
-    if (opt && opt.value !== '') {
-      emailInput.value = opt.value;
-      fullNameInput.value = opt.dataset.name;
-      emailInput.readOnly = true;
-      emailInput.classList.add('bg-gray-100');
+    var $opt = $empSel.find('option:selected');
+    if ($opt.val()) {
+      $emailIn.val($opt.val()).prop('readonly', true).addClass('bg-gray-100');
+      $nameIn.val($opt.data('name'));
     } else {
-      if(employeeSelect.dataset.initialLoad !== "1") {
-        emailInput.value = '';
-        fullNameInput.value = '';
+      if ($empSel.data('initialLoad') !== '1') {
+        $emailIn.val('');
+        $nameIn.val('');
       }
-      emailInput.readOnly = false;
-      emailInput.classList.remove('bg-gray-100');
+      $emailIn.prop('readonly', false).removeClass('bg-gray-100');
     }
-    employeeSelect.dataset.initialLoad = "0";
+    $empSel.data('initialLoad', '0');
+    renderAssignedElsewhere($emailIn.val());
   }
 
-  employeeSelect.dataset.initialLoad = "1";
-  employeeSelect.addEventListener('change', updateEmployeeFields);
-  updateEmployeeFields(); // Run on load
+  // --- "Assigned Elsewhere" panel ---
+  var employeeAssignments = {{ employee_assignments | tojson | safe }};
+  var currentAssignmentId = {{ current_assignment_id | tojson | safe }};
+  var $panel = $('#employee_assignments_panel');
 
-  entitySelect.addEventListener('change', filterSitesByEntity);
-  roleSelect.addEventListener('change', applyCentralizedRule);
+  function renderAssignedElsewhere(email) {
+    var entries = (email && employeeAssignments[email]) ? employeeAssignments[email] : [];
+    entries = entries.filter(function(e) { return e.id !== currentAssignmentId; });
+
+    if (!email) {
+      $panel.html('<p class="text-xs text-gray-400 italic">Select or type an employee to see their other assignments.</p>');
+      return;
+    }
+    if (entries.length === 0) {
+      $panel.html('<p class="text-xs text-gray-400 italic">No other assignments for this employee.</p>');
+      return;
+    }
+    var html = '';
+    entries.forEach(function(e) {
+      html += '<div class="flex items-center justify-between gap-2 border border-gray-100 rounded-md px-2.5 py-1.5 ' +
+              (e.is_active ? '' : 'opacity-50') + '">';
+      html += '<div class="min-w-0">';
+      html += '<span class="font-medium text-gray-800">' + e.role_name + '</span>';
+      html += '<div class="text-xs text-gray-500 truncate">' + e.entity_code + (e.site_name ? ' &middot; ' + e.site_name : '') + '</div>';
+      html += '</div>';
+      if (!e.is_active) html += '<span class="text-[10px] text-gray-400 shrink-0">Inactive</span>';
+      html += '</div>';
+    });
+    $panel.html(html);
+  }
+
+  // Wire events via jQuery (compatible with Select2)
+  $entity.on('change', filterSitesByEntity);
+  $empSel.data('initialLoad', '1').on('change', updateEmployeeFields);
+  $emailIn.on('blur', function() { renderAssignedElsewhere($emailIn.val()); });
+
+  // Run on initial load
   filterSitesByEntity();
-  applyCentralizedRule();
+  toggleSiteNote();
+  updateEmployeeFields();
+});
 </script>
 {% endblock %}
