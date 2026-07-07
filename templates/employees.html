@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Master Data Employee{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold">Master Data Employee</h1>
+  <a href="{{ url_for('new_assignment') }}"
+     class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">+ Add Employee</a>
+</div>
+
+<div class="overflow-x-auto border border-gray-200 rounded-lg bg-white p-4">
+  <table id="employeesTable" class="min-w-full text-sm">
+    <thead class="bg-gray-100 text-left text-gray-600">
+      <tr>
+        <th class="px-4 py-2">Name</th>
+        <th class="px-4 py-2">Email</th>
+        <th class="px-4 py-2">Entity</th>
+        <th class="px-4 py-2">Site Location</th>
+        <th class="px-4 py-2">Role</th>
+        <th class="px-4 py-2">Status</th>
+        <th class="px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {% for emp in employees %}
+      <tr class="border-b border-gray-300 last:border-0 hover:bg-gray-100 transition-colors {{ '' if emp.is_active else 'opacity-50' }}">
+        <td class="px-4 py-3 font-medium align-top">{{ emp.full_name }}</td>
+        <td class="px-4 py-3 text-gray-500 align-top">{{ emp.email }}</td>
+        <td class="px-4 py-3 align-top">
+          <div class="flex flex-col gap-2">
+            {% set ns_entity = namespace(prev='') %}
+            {% for assignment in emp.assignments_list|reject('none') %}
+              {% set parts = assignment.split(' : ') %}
+              {% if parts|length == 2 %}
+                <div class="h-6 flex items-center">
+                  {% if parts[0] != ns_entity.prev %}
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 tracking-wide">{{ parts[0] }}</span>
+                    {% set ns_entity.prev = parts[0] %}
+                  {% endif %}
+                </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </td>
+        <td class="px-4 py-3 align-top">
+          <div class="flex flex-col gap-2">
+            {% set ns_site = namespace(prev='') %}
+            {% for assignment in emp.assignments_list|reject('none') %}
+              {% set parts = assignment.split(' : ') %}
+              {% if parts|length == 2 %}
+                {% set site = parts[1].split(' — ')[0] %}
+                <div class="h-6 flex items-center text-xs text-gray-700">
+                  {% if site != ns_site.prev %}
+                    {{ site }}
+                    {% set ns_site.prev = site %}
+                  {% endif %}
+                </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </td>
+        <td class="px-4 py-3 align-top">
+          <div class="flex flex-col gap-2">
+            {% for assignment in emp.assignments_list|reject('none') %}
+              {% set parts = assignment.split(' : ') %}
+              {% if parts|length == 2 %}
+                <div class="h-6 flex items-center">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-200">{{ parts[1].split(' — ')[1] }}</span>
+                </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </td>
+        <td class="px-4 py-3 align-top">
+          <span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold {{ 'bg-green-100 text-green-700' if emp.is_active else 'bg-gray-100 text-gray-500' }}">
+            {{ 'Active' if emp.is_active else 'Inactive' }}
+          </span>
+        </td>
+        <td class="px-4 py-3 text-right whitespace-nowrap align-top">
+          <a href="{{ url_for('edit_employee', email=emp.email) }}" class="text-gray-500 hover:text-gray-900">Edit</a>
+          <form method="post" action="{{ url_for('delete_employee', email=emp.email) }}" class="inline" onsubmit="return confirm('Delete this employee? This will permanently remove all of their assignments.')">
+            <button type="submit" class="text-red-500 hover:text-red-700 ml-3">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="5" class="px-4 py-6 text-center text-gray-400">No employees found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<style>
+  .dataTables_wrapper .dataTables_length select { border: 1px solid #aaa; border-radius: 3px; padding: 4px; background-color: transparent; }
+  .dataTables_wrapper .dataTables_filter input { border: 1px solid #aaa; border-radius: 3px; padding: 4px; background-color: transparent; margin-left: 3px; }
+  .dataTables_wrapper { padding-top: 0.5rem; }
+  table.dataTable thead th, table.dataTable thead td { border-bottom: 1px solid #e5e7eb; }
+  table.dataTable.no-footer { border-bottom: 1px solid #e5e7eb; }
+  .filters input {
+    width: 100%;
+    padding: 2px 4px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: normal;
+  }
+</style>
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script>
+$(document).ready(function() {
+    $('#employeesTable thead tr').clone(true).addClass('filters').appendTo('#employeesTable thead');
+
+    var table = $('#employeesTable').DataTable({
+        orderCellsTop: true,
+        fixedHeader: true,
+        pageLength: 50,
+        lengthMenu: [ [10, 25, 50, 100, -1], [10, 25, 50, 100, "All"] ],
+        initComplete: function () {
+            var api = this.api();
+            api.columns().eq(0).each(function (colIdx) {
+                var cell = $('.filters th').eq($(api.column(colIdx).header()).index());
+                var title = $(cell).text().trim();
+                
+                if(colIdx === 4) { $(cell).html(''); return; }
+                
+                $(cell).html('<input type="text" placeholder="Filter ' + title + '" />');
+
+                $('input', $('.filters th').eq($(api.column(colIdx).header()).index()))
+                    .off('keyup change')
+                    .on('keyup change', function (e) {
+                        e.stopPropagation();
+                        $(this).attr('title', $(this).val());
+                        var regexr = '({search})';
+                        api.column(colIdx)
+                            .search(
+                                this.value != ''
+                                    ? regexr.replace('{search}', '(((' + this.value + ')))')
+                                    : '',
+                                this.value != '',
+                                this.value == ''
+                            )
+                            .draw();
+                    })
+                    .on('click', function (e) {
+                        e.stopPropagation();
+                    });
+            });
+        },
+    });
+});
+</script>
+{% endblock %}

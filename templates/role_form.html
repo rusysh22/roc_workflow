@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit Role' if role else 'Add Role' }}{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto py-6">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">{{ 'Edit Role' if role else 'Add New Role' }}</h1>
+    <a href="{{ url_for('roles_list') }}" class="text-sm font-medium text-sky-600 hover:text-sky-800 flex items-center gap-1 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+      Back to Roles
+    </a>
+  </div>
+
+  <div class="bg-white/90 backdrop-blur-md rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
+    <div class="h-2 w-full bg-gradient-to-r from-sky-400 to-blue-500"></div>
+    <form method="POST" class="p-6 md:p-8 space-y-6 relative">
+      
+      <div>
+        <label for="name" class="block text-sm font-semibold text-gray-700 mb-2">Role Name <span class="text-red-500">*</span></label>
+        <input type="text" id="name" name="name" value="{{ role.name if role else '' }}" required
+          class="w-full border-gray-300 rounded-lg shadow-sm focus:border-sky-500 focus:ring-sky-500 text-sm px-4 py-2.5 transition-colors bg-gray-50 focus:bg-white"
+          placeholder="e.g. Finance Manager">
+      </div>
+      
+      <div class="pt-2">
+        <label class="flex items-start gap-3 p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+          <div class="flex items-center h-5 mt-0.5">
+            <input type="checkbox" id="is_centralized" name="is_centralized" 
+              class="w-4 h-4 rounded text-sky-600 focus:ring-sky-500 border-gray-300"
+              {% if role and role.is_centralized %}checked{% endif %}>
+          </div>
+          <div class="flex flex-col">
+            <span class="text-sm font-bold text-gray-800">Centralized Role</span>
+            <span class="text-xs text-gray-500 mt-1 leading-relaxed">Check this if the role is centralized (e.g. Head Office roles like President Director) and does not vary by site location. Local site mapping will be disabled.</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="pt-6 border-t border-gray-100 flex justify-end gap-3 mt-4">
+        <a href="{{ url_for('roles_list') }}" class="px-5 py-2.5 bg-white border border-gray-300 rounded-lg shadow-sm text-sm font-bold text-gray-700 hover:bg-gray-50 focus:outline-none transition-colors">
+          Cancel
+        </a>
+        <button type="submit" class="px-6 py-2.5 bg-gray-900 border border-transparent rounded-lg shadow-md text-sm font-bold text-white hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 transition-transform transform hover:scale-105 duration-200">
+          {{ 'Save Changes' if role else 'Create Role' }}
+        </button>
+      </div>
+      
+    </form>
+  </div>
+</div>
+{% endblock %}

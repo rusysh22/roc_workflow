@@ -24,14 +24,14 @@ def format_tier_label(min_usd, max_usd, exchange_rate_idr):
     min_idr = min_usd * rate
 
     if min_usd == 0:
-        usd = f"< US${_compact_usd(max_usd)}"
-        idr = f"< {_rupiah(float(max_usd) * rate)}"
+        usd = {"op": "<", "max": f"US${_compact_usd(max_usd)}"}
+        idr = {"op": "<", "max": _rupiah(float(max_usd) * rate)}
     elif max_usd is None:
-        usd = f"≥ US${_compact_usd(min_usd)}"
-        idr = f"≥ {_rupiah(min_idr)}"
+        usd = {"op": ">=", "min": f"US${_compact_usd(min_usd)}"}
+        idr = {"op": ">=", "min": _rupiah(min_idr)}
     else:
         max_idr = float(max_usd) * rate
-        usd = f"US${_compact_usd(min_usd)} – < US${_compact_usd(max_usd)}"
-        idr = f"{_rupiah(min_idr)} – < {_rupiah(max_idr)}"
+        usd = {"op": "range", "min": f"US${_compact_usd(min_usd)}", "max": f"US${_compact_usd(max_usd)}"}
+        idr = {"op": "range", "min": _rupiah(min_idr), "max": _rupiah(max_idr)}
 
-    return f"{usd} or {idr}"
+    return {"usd": usd, "idr": idr}

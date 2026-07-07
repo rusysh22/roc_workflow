@@ -15,6 +15,35 @@ from lib.money import format_tier_label  # noqa: E402
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
+# --- Auto-migrate DB Schema ---
+try:
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute("ALTER TABLE work_units ADD COLUMN IF NOT EXISTS site_id INTEGER REFERENCES sites(id);")
+        cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS creator_role_id INTEGER REFERENCES roles(id);")
+        cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS approver_role_id INTEGER REFERENCES roles(id);")
+        cur.execute("ALTER TABLE workpaper_rows ADD COLUMN IF NOT EXISTS comment TEXT;")
+        
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tier_entities (
+                tier_id INTEGER REFERENCES amount_tiers(id) ON DELETE CASCADE,
+                entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+                PRIMARY KEY (tier_id, entity_id)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tier_sites (
+                tier_id INTEGER REFERENCES amount_tiers(id) ON DELETE CASCADE,
+                site_id INTEGER REFERENCES sites(id) ON DELETE CASCADE,
+                PRIMARY KEY (tier_id, site_id)
+            )
+        """)
+        
+        conn.commit()
+    conn.close()
+except Exception as e:
+    print(f"Auto-migrate failed: {e}")
+
 PUBLIC_ENDPOINTS = {"login", "static"}
 
 
@@ -120,8 +149,16 @@ def entity_badge_class(code):
     color = ENTITY_BADGE_COLORS.get(code, "gray")
     return f"bg-{color}-100 text-{color}-700"
 
+def string_badge_class(val):
+    if not val:
+        return "bg-gray-100 text-gray-700"
+    colors = ["red", "orange", "amber", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose"]
+    idx = sum(ord(c) for c in val) % len(colors)
+    color = colors[idx]
+    return f"bg-{color}-100 text-{color}-700"
 
 app.jinja_env.globals["entity_badge_class"] = entity_badge_class
+app.jinja_env.globals["string_badge_class"] = string_badge_class
 
 
 def get_lookup_data(cur):
@@ -150,11 +187,25 @@ def get_ho_jakarta_site_id(cur):
     return row["id"] if row else None
 
 
+@app.route("/profile", methods=["GET", "POST"])
+def profile():
+    if request.method == "POST":
+        flash("Profile updated successfully (Mock)", "success")
+        return redirect(url_for("profile"))
+    return render_template("profile.html")
+
+
 @app.route("/")
 def home():
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
+            # Auto-migrate new columns for dynamic workpapers
+            cur.execute("ALTER TABLE work_units ADD COLUMN IF NOT EXISTS site_id INTEGER REFERENCES sites(id);")
+            cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS creator_role_id INTEGER REFERENCES roles(id);")
+            cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS approver_role_id INTEGER REFERENCES roles(id);")
+            conn.commit()
+
             cur.execute("SELECT COUNT(*) AS n FROM entities")
             total_entities = cur.fetchone()["n"]
             cur.execute("SELECT COUNT(*) AS n FROM sites")
@@ -254,6 +305,233 @@ def assignments():
     )
 
 
+# ---------- Roles ----------
+@app.route("/roles")
+def roles_list():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM roles ORDER BY name")
+            roles = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template("roles.html", roles=roles)
+
+@app.route("/roles/new", methods=["GET", "POST"])
+def new_role():
+    if request.method == "POST":
+        name = request.form.get("name")
+        is_centralized = request.form.get("is_centralized") == "on"
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO roles (name, is_centralized) VALUES (%s, %s)",
+                    (name, is_centralized)
+                )
+                conn.commit()
+            flash("Role created successfully.", "success")
+            return redirect(url_for("roles_list"))
+        except Exception as e:
+            flash(f"Error: {e}", "error")
+        finally:
+            conn.close()
+    return render_template("role_form.html", role=None)
+
+@app.route("/roles/edit/<int:id>", methods=["GET", "POST"])
+def edit_role(id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            if request.method == "POST":
+                name = request.form.get("name")
+                is_centralized = request.form.get("is_centralized") == "on"
+                cur.execute(
+                    "UPDATE roles SET name = %s, is_centralized = %s WHERE id = %s",
+                    (name, is_centralized, id)
+                )
+                conn.commit()
+                flash("Role updated successfully.", "success")
+                return redirect(url_for("roles_list"))
+            else:
+                cur.execute("SELECT * FROM roles WHERE id = %s", (id,))
+                role = cur.fetchone()
+                if not role:
+                    flash("Role not found.", "error")
+                    return redirect(url_for("roles_list"))
+    finally:
+        conn.close()
+    return render_template("role_form.html", role=role)
+
+@app.route("/roles/delete/<int:id>", methods=["POST"])
+def delete_role(id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM roles WHERE id = %s", (id,))
+            conn.commit()
+        flash("Role deleted successfully.", "success")
+    except Exception as e:
+        flash("Cannot delete this role because it is still assigned to users or workpapers.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("roles_list"))
+
+
+# ---------- Amount Tiers ----------
+@app.route("/amount-tiers")
+def amount_tiers_list():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.*, 
+                       (SELECT COUNT(*) FROM tier_entities te WHERE te.tier_id = a.id) as entity_count,
+                       (SELECT COUNT(*) FROM tier_sites ts WHERE ts.tier_id = a.id) as site_count,
+                       (SELECT COUNT(*) FROM entities) as total_entities,
+                       (SELECT COUNT(*) FROM sites) as total_sites
+                FROM amount_tiers a
+                ORDER BY a.seq
+            """)
+            tiers = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template("amount_tiers.html", tiers=tiers)
+
+@app.route("/amount-tiers/new", methods=["GET", "POST"])
+def new_amount_tier():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            if request.method == "POST":
+                seq = request.form.get("seq", type=int)
+                min_usd = request.form.get("min_usd", type=float)
+                max_usd = request.form.get("max_usd", type=float) or None
+                entity_ids = request.form.getlist("entity_ids")
+                site_ids = request.form.getlist("site_ids")
+                
+                try:
+                    cur.execute("""
+                        INSERT INTO amount_tiers (seq, min_usd, max_usd)
+                        VALUES (%s, %s, %s) RETURNING id
+                    """, (seq, min_usd, max_usd))
+                    new_id = cur.fetchone()["id"]
+                    
+                    for eid in entity_ids:
+                        cur.execute("INSERT INTO tier_entities (tier_id, entity_id) VALUES (%s, %s)", (new_id, eid))
+                    for sid in site_ids:
+                        cur.execute("INSERT INTO tier_sites (tier_id, site_id) VALUES (%s, %s)", (new_id, sid))
+                        
+
+                    conn.commit()
+                    flash("Limit berhasil ditambahkan.", "success")
+                    return redirect(url_for("amount_tiers_list"))
+                except Exception as e:
+                    conn.rollback()
+                    flash(f"Error: {e}", "error")
+            
+            entities, sites, _ = get_lookup_data(cur)
+    finally:
+        conn.close()
+    return render_template("amount_tier_form.html", mode="create", tier={}, entities=entities, sites=sites)
+
+@app.route("/amount-tiers/<int:tier_id>/edit", methods=["GET", "POST"])
+def edit_amount_tier(tier_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            if request.method == "POST":
+                seq = request.form.get("seq", type=int)
+                min_usd = request.form.get("min_usd", type=float)
+                max_usd = request.form.get("max_usd", type=float) or None
+                entity_ids = request.form.getlist("entity_ids")
+                site_ids = request.form.getlist("site_ids")
+                
+                try:
+                    cur.execute("""
+                        UPDATE amount_tiers
+                        SET seq=%s, min_usd=%s, max_usd=%s
+                        WHERE id=%s
+                    """, (seq, min_usd, max_usd, tier_id))
+                    
+                    cur.execute("DELETE FROM tier_entities WHERE tier_id = %s", (tier_id,))
+                    cur.execute("DELETE FROM tier_sites WHERE tier_id = %s", (tier_id,))
+                    
+                    for eid in entity_ids:
+                        cur.execute("INSERT INTO tier_entities (tier_id, entity_id) VALUES (%s, %s)", (tier_id, eid))
+                    for sid in site_ids:
+                        cur.execute("INSERT INTO tier_sites (tier_id, site_id) VALUES (%s, %s)", (tier_id, sid))
+                        
+                    conn.commit()
+                    flash("Limit berhasil diperbarui.", "success")
+                    return redirect(url_for("amount_tiers_list"))
+                except Exception as e:
+                    conn.rollback()
+                    flash(f"Error: {e}", "error")
+            
+            cur.execute("SELECT * FROM amount_tiers WHERE id = %s", (tier_id,))
+            tier = cur.fetchone()
+            if not tier:
+                return redirect(url_for("amount_tiers_list"))
+                
+            cur.execute("SELECT entity_id FROM tier_entities WHERE tier_id = %s", (tier_id,))
+            tier_entities = [row["entity_id"] for row in cur.fetchall()]
+            
+            cur.execute("SELECT site_id FROM tier_sites WHERE tier_id = %s", (tier_id,))
+            tier_sites = [row["site_id"] for row in cur.fetchall()]
+            
+            entities, sites, _ = get_lookup_data(cur)
+    finally:
+        conn.close()
+    return render_template("amount_tier_form.html", mode="edit", tier=tier, entities=entities, sites=sites, tier_entities=tier_entities, tier_sites=tier_sites)
+
+@app.route("/amount-tiers/<int:tier_id>/delete", methods=["POST"])
+def delete_amount_tier(tier_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM amount_tiers WHERE id = %s", (tier_id,))
+            conn.commit()
+            flash("Limit berhasil dihapus.", "success")
+    except Exception as e:
+        flash(f"Gagal menghapus: {e}", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("amount_tiers_list"))
+
+
+# ---------- Employees (Master Data) ----------
+
+@app.route("/employees")
+def employees():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    ua.email,
+                    MAX(ua.full_name) as full_name,
+                    array_agg(
+                        concat(
+                            COALESCE(e.code, '-'), ' : ',
+                            COALESCE(s.name, 'All Sites'), ' — ',
+                            COALESCE(r.name, '-')
+                        ) ORDER BY e.code, s.name, r.name
+                    ) as assignments_list,
+                    bool_or(ua.is_active) as is_active
+                FROM user_assignments ua
+                JOIN entities e ON e.id = ua.entity_id
+                JOIN roles r ON r.id = ua.role_id
+                LEFT JOIN sites s ON s.id = ua.site_id
+                GROUP BY ua.email
+                ORDER BY full_name
+            """)
+            employees = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template("employees.html", employees=employees)
+
+
 def _read_assignment_form(cur, roles):
     full_name = request.form.get("full_name", "").strip()
     email = request.form.get("email", "").strip()
@@ -309,6 +587,8 @@ def new_assignment():
     try:
         with conn.cursor() as cur:
             entities, sites, roles = get_lookup_data(cur)
+            cur.execute("SELECT DISTINCT email, full_name FROM user_assignments ORDER BY full_name")
+            employees_list = cur.fetchall()
 
             if request.method == "POST":
                 data, errors = _read_assignment_form(cur, roles)
@@ -318,7 +598,7 @@ def new_assignment():
                         flash(message, "error")
                     return render_template(
                         "assignment_form.html", mode="create", assignment=_sticky_assignment(data),
-                        entities=entities, sites=sites, roles=roles,
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
                     )
 
                 try:
@@ -343,7 +623,7 @@ def new_assignment():
                     flash("An assignment with this email, entity, and role already exists.", "error")
                     return render_template(
                         "assignment_form.html", mode="create", assignment=_sticky_assignment(data),
-                        entities=entities, sites=sites, roles=roles,
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
                     )
 
                 flash("Assignment added.", "success")
@@ -355,9 +635,8 @@ def new_assignment():
 
     return render_template(
         "assignment_form.html", mode="create", assignment=assignment,
-        entities=entities, sites=sites, roles=roles,
+        entities=entities, sites=sites, roles=roles, employees_list=employees_list
     )
-
 
 @app.route("/assignments/<int:assignment_id>/edit", methods=["GET", "POST"])
 def edit_assignment(assignment_id):
@@ -365,6 +644,8 @@ def edit_assignment(assignment_id):
     try:
         with conn.cursor() as cur:
             entities, sites, roles = get_lookup_data(cur)
+            cur.execute("SELECT DISTINCT email, full_name FROM user_assignments ORDER BY full_name")
+            employees_list = cur.fetchall()
 
             cur.execute(
                 """
@@ -391,7 +672,7 @@ def edit_assignment(assignment_id):
                     return render_template(
                         "assignment_form.html", mode="edit",
                         assignment=_sticky_assignment(data, {"id": assignment_id}),
-                        entities=entities, sites=sites, roles=roles,
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
                     )
 
                 new_entity_code = next(e["code"] for e in entities if e["id"] == int(data["entity_id"]))
@@ -439,7 +720,7 @@ def edit_assignment(assignment_id):
                     return render_template(
                         "assignment_form.html", mode="edit",
                         assignment=_sticky_assignment(data, {"id": assignment_id}),
-                        entities=entities, sites=sites, roles=roles,
+                        entities=entities, sites=sites, roles=roles, employees_list=employees_list
                     )
 
                 flash("Assignment updated.", "success")
@@ -451,7 +732,7 @@ def edit_assignment(assignment_id):
 
     return render_template(
         "assignment_form.html", mode="edit", assignment=assignment,
-        entities=entities, sites=sites, roles=roles,
+        entities=entities, sites=sites, roles=roles, employees_list=employees_list
     )
 
 
@@ -499,10 +780,12 @@ def workpapers():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT wu.id, wu.code, wu.project_name,
-                       e.code AS entity_code, e.name AS entity_name
+                SELECT wu.id, wu.code, wu.project_name, wu.site_id,
+                       e.code AS entity_code, e.name AS entity_name,
+                       s.name AS site_name
                 FROM work_units wu
                 JOIN entities e ON e.id = wu.entity_id
+                LEFT JOIN sites s ON s.id = wu.site_id
                 ORDER BY e.code, wu.sort_order, wu.code
                 """
             )
@@ -528,10 +811,12 @@ def workpaper_detail(code):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT wu.id, wu.code, wu.project_name, wu.entity_id,
-                       e.code AS entity_code, e.name AS entity_name, e.exchange_rate_idr
+                SELECT wu.id, wu.code, wu.project_name, wu.entity_id, wu.site_id,
+                       e.code AS entity_code, e.name AS entity_name, e.exchange_rate_idr,
+                       s.name AS site_name
                 FROM work_units wu
                 JOIN entities e ON e.id = wu.entity_id
+                LEFT JOIN sites s ON s.id = wu.site_id
                 WHERE wu.code = %s
                 """,
                 (code,),
@@ -541,7 +826,13 @@ def workpaper_detail(code):
                 flash("Kertas kerja tidak ditemukan.", "error")
                 return redirect(url_for("workpapers"))
 
-            cur.execute("SELECT id, seq, min_usd, max_usd FROM amount_tiers ORDER BY seq")
+            cur.execute("""
+                SELECT id, seq, min_usd, max_usd 
+                FROM amount_tiers a
+                WHERE EXISTS (SELECT 1 FROM tier_entities WHERE tier_id = a.id AND entity_id = %s)
+                  AND (%s IS NULL OR EXISTS (SELECT 1 FROM tier_sites WHERE tier_id = a.id AND site_id = %s))
+                ORDER BY seq
+            """, (unit["entity_id"], unit["site_id"], unit["site_id"]))
             bands = [
                 {
                     "id": t["id"],
@@ -551,9 +842,10 @@ def workpaper_detail(code):
                 for t in cur.fetchall()
             ]
 
+            # Fetch row structure
             cur.execute(
                 """
-                SELECT wr.id, wr.row_kind, wr.seq, r.name AS level_label,
+                SELECT wr.id, wr.row_kind, wr.seq, wr.role_id, r.name AS level_label,
                        wr.person_name, p.title AS position, wr.comment
                 FROM workpaper_rows wr
                 LEFT JOIN roles r ON r.id = wr.role_id
@@ -564,6 +856,39 @@ def workpaper_detail(code):
                 (unit["id"],),
             )
             rows = cur.fetchall()
+            
+            # Fetch active employees for this entity and site
+            # If site_id is missing, fallback to entity only
+            if unit["site_id"]:
+                cur.execute(
+                    """
+                    SELECT role_id, array_agg(DISTINCT full_name) as names 
+                    FROM user_assignments 
+                    WHERE is_active = TRUE AND entity_id = %s AND site_id = %s
+                    GROUP BY role_id
+                    """,
+                    (unit["entity_id"], unit["site_id"])
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT role_id, array_agg(DISTINCT full_name) as names 
+                    FROM user_assignments 
+                    WHERE is_active = TRUE AND entity_id = %s
+                    GROUP BY role_id
+                    """,
+                    (unit["entity_id"],)
+                )
+            
+            active_users_by_role = {r["role_id"]: r["names"] for r in cur.fetchall()}
+            
+            # Populate dynamic names for rows
+            for row in rows:
+                if row["role_id"] and row["role_id"] in active_users_by_role:
+                    row["dynamic_names"] = " / ".join(active_users_by_role[row["role_id"]])
+                else:
+                    row["dynamic_names"] = row["person_name"] # fallback to hardcoded if no active assignment
+
 
             cur.execute(
                 """
@@ -578,16 +903,28 @@ def workpaper_detail(code):
 
             cur.execute(
                 """
-                SELECT tier_id, creator_name, approver_name
+                SELECT tier_id, creator_name, approver_name, creator_role_id, approver_role_id
                 FROM ses_entries
                 WHERE work_unit_id = %s
                 """,
                 (unit["id"],),
             )
             ses = {s["tier_id"]: s for s in cur.fetchall()}
+            
+            # Populate SES dynamic names
+            for tier_id, s in ses.items():
+                if s["creator_role_id"] and s["creator_role_id"] in active_users_by_role:
+                    s["dynamic_creator"] = " / ".join(active_users_by_role[s["creator_role_id"]])
+                else:
+                    s["dynamic_creator"] = s["creator_name"]
+                
+                if s["approver_role_id"] and s["approver_role_id"] in active_users_by_role:
+                    s["dynamic_approver"] = " / ".join(active_users_by_role[s["approver_role_id"]])
+                else:
+                    s["dynamic_approver"] = s["approver_name"]
 
             cur.execute(
-                "SELECT code, project_name FROM work_units ORDER BY sort_order, code"
+                "SELECT code, project_name, site_id FROM work_units ORDER BY sort_order, code"
             )
             all_units = cur.fetchall()
     finally:
@@ -604,6 +941,222 @@ def workpaper_detail(code):
         matrix=matrix, ses=ses, all_units=all_units,
     )
 
+
+def _process_workpaper_form(cur, request_form, unit_id):
+    # Clear old rows and entries
+    cur.execute("DELETE FROM workpaper_rows WHERE work_unit_id = %s", (unit_id,))
+    cur.execute("DELETE FROM ses_entries WHERE work_unit_id = %s", (unit_id,))
+    
+    # Insert authority rows
+    role_ids = request_form.getlist("row_role_id[]")
+    positions = request_form.getlist("row_position[]")
+    comments = request_form.getlist("row_comment[]")
+    
+    # We also need band_ids to check checkboxes
+    cur.execute("""
+        SELECT id FROM amount_tiers a
+        WHERE EXISTS (
+            SELECT 1 FROM tier_entities 
+            WHERE tier_id = a.id AND entity_id = (SELECT entity_id FROM work_units WHERE id = %s)
+        )
+        AND (
+            (SELECT site_id FROM work_units WHERE id = %s) IS NULL
+            OR EXISTS (
+                SELECT 1 FROM tier_sites 
+                WHERE tier_id = a.id AND site_id = (SELECT site_id FROM work_units WHERE id = %s)
+            )
+        )
+        ORDER BY seq
+    """, (unit_id, unit_id, unit_id))
+    bands = cur.fetchall()
+    
+    for i, role_id in enumerate(role_ids):
+        if not role_id: continue
+        position = positions[i] if i < len(positions) else ""
+        comment = comments[i] if i < len(comments) else ""
+        cur.execute(
+            "INSERT INTO workpaper_rows (work_unit_id, row_kind, seq, role_id, position, comment) VALUES (%s, 'authority', %s, %s, %s, %s) RETURNING id",
+            (unit_id, i+1, role_id, position, comment)
+        )
+        row_id = cur.fetchone()["id"]
+        
+        for b in bands:
+            # checkbox name format: row_check_0_5
+            if request_form.get(f"row_check_{i}_{b['id']}"):
+                cur.execute(
+                    "INSERT INTO workpaper_authority (row_id, tier_id, required) VALUES (%s, %s, TRUE)",
+                    (row_id, b["id"])
+                )
+
+    # Insert buyer & creator
+    buyer_role = request_form.get("buyer_role_id")
+    creator_role = request_form.get("creator_role_id")
+    
+    if buyer_role:
+        cur.execute("INSERT INTO workpaper_rows (work_unit_id, row_kind, seq, role_id) VALUES (%s, 'buyer', 998, %s)", (unit_id, buyer_role))
+    if creator_role:
+        cur.execute("INSERT INTO workpaper_rows (work_unit_id, row_kind, seq, role_id) VALUES (%s, 'creator', 999, %s)", (unit_id, creator_role))
+
+    # Insert SES entries
+    for b in bands:
+        ses_creator = request_form.get(f"ses_creator_{b['id']}")
+        ses_approver = request_form.get(f"ses_approver_{b['id']}")
+        if ses_creator or ses_approver:
+            # allow empty values to be inserted as NULL
+            c_val = ses_creator if ses_creator else None
+            a_val = ses_approver if ses_approver else None
+            cur.execute(
+                "INSERT INTO ses_entries (work_unit_id, tier_id, creator_role_id, approver_role_id) VALUES (%s, %s, %s, %s)",
+                (unit_id, b["id"], c_val, a_val)
+            )
+
+@app.route("/workpapers/new", methods=["GET", "POST"])
+def new_workpaper():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            entities, sites, roles = get_lookup_data(cur)
+            # For new workpapers, we fetch all tiers initially
+            cur.execute("SELECT id, seq, min_usd, max_usd FROM amount_tiers ORDER BY seq")
+            # Create dummy unit with default IDR for label formatting
+            dummy_idr = 16000
+            bands = [{"id": t["id"], "label": format_tier_label(t["min_usd"], t["max_usd"], dummy_idr)} for t in cur.fetchall()]
+
+            cur.execute("""
+                SELECT ua.role_id, ua.entity_id, ua.site_id, ua.full_name, e.code as entity_code, s.name as site_name
+                FROM user_assignments ua
+                JOIN entities e ON ua.entity_id = e.id
+                LEFT JOIN sites s ON ua.site_id = s.id
+            """)
+            assignments = cur.fetchall()
+            role_assignments = {}
+            for a in assignments:
+                r = a["role_id"]
+                if r not in role_assignments:
+                    role_assignments[r] = []
+                site_str = f" - {a['site_name']}" if a['site_name'] else ""
+                role_assignments[r].append(f"Assigned: {a['full_name']} ({a['entity_code']}{site_str})")
+
+            if request.method == "POST":
+                entity_id = request.form.get("entity_id")
+                site_id = request.form.get("site_id") or None
+                code = request.form.get("code")
+                project_name = request.form.get("project_name")
+                
+                try:
+                    cur.execute(
+                        "INSERT INTO work_units (entity_id, site_id, code, project_name) VALUES (%s, %s, %s, %s) RETURNING id",
+                        (entity_id, site_id, code, project_name)
+                    )
+                    unit_id = cur.fetchone()["id"]
+                    
+                    _process_workpaper_form(cur, request.form, unit_id)
+                    conn.commit()
+                    flash("Kertas kerja berhasil dibuat.", "success")
+                    return redirect(url_for("workpaper_detail", code=code))
+                except Exception as e:
+                    conn.rollback()
+                    flash(f"Error: {e}", "error")
+                    
+    finally:
+        conn.close()
+    
+    return render_template("workpaper_form.html", mode="create", unit=None, entities=entities, sites=sites, roles=roles, bands=bands, authority_rows=[], matrix={}, buyer_row=None, creator_row=None, ses={}, role_assignments=role_assignments)
+
+@app.route("/workpapers/<code>/edit", methods=["GET", "POST"])
+def edit_workpaper(code):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM work_units WHERE code = %s", (code,))
+            unit = cur.fetchone()
+            if not unit:
+                return redirect(url_for("workpapers"))
+
+            entities, sites, roles = get_lookup_data(cur)
+            
+            # For formatting bands
+            cur.execute("SELECT exchange_rate_idr FROM entities WHERE id = %s", (unit["entity_id"],))
+            idr = cur.fetchone()["exchange_rate_idr"]
+            
+            cur.execute("""
+                SELECT id, seq, min_usd, max_usd 
+                FROM amount_tiers a
+                WHERE EXISTS (SELECT 1 FROM tier_entities WHERE tier_id = a.id AND entity_id = %s)
+                  AND (%s IS NULL OR EXISTS (SELECT 1 FROM tier_sites WHERE tier_id = a.id AND site_id = %s))
+                ORDER BY seq
+            """, (unit["entity_id"], unit["site_id"], unit["site_id"]))
+            bands = [{"id": t["id"], "label": format_tier_label(t["min_usd"], t["max_usd"], idr)} for t in cur.fetchall()]
+
+            if request.method == "POST":
+                entity_id = request.form.get("entity_id")
+                site_id = request.form.get("site_id") or None
+                new_code = request.form.get("code")
+                project_name = request.form.get("project_name")
+                
+                try:
+                    cur.execute(
+                        "UPDATE work_units SET entity_id=%s, site_id=%s, code=%s, project_name=%s WHERE id=%s",
+                        (entity_id, site_id, new_code, project_name, unit["id"])
+                    )
+                    _process_workpaper_form(cur, request.form, unit["id"])
+                    conn.commit()
+                    flash("Kertas kerja berhasil diperbarui.", "success")
+                    return redirect(url_for("workpaper_detail", code=new_code))
+                except Exception as e:
+                    conn.rollback()
+                    flash(f"Error: {e}", "error")
+
+            cur.execute("SELECT * FROM workpaper_rows WHERE work_unit_id = %s ORDER BY seq", (unit["id"],))
+            rows = cur.fetchall()
+            authority_rows = [r for r in rows if r["row_kind"] == "authority"]
+            buyer_row = next((r for r in rows if r["row_kind"] == "buyer"), None)
+            creator_row = next((r for r in rows if r["row_kind"] == "creator"), None)
+            
+            cur.execute(
+                "SELECT wa.row_id, wa.tier_id, wa.required FROM workpaper_authority wa JOIN workpaper_rows wr ON wr.id = wa.row_id WHERE wr.work_unit_id = %s",
+                (unit["id"],)
+            )
+            matrix = {(m["row_id"], m["tier_id"]): m["required"] for m in cur.fetchall()}
+            
+            cur.execute("SELECT * FROM ses_entries WHERE work_unit_id = %s", (unit["id"],))
+            ses = {s["tier_id"]: s for s in cur.fetchall()}
+            
+            cur.execute("""
+                SELECT ua.role_id, ua.entity_id, ua.site_id, ua.full_name, e.code as entity_code, s.name as site_name
+                FROM user_assignments ua
+                JOIN entities e ON ua.entity_id = e.id
+                LEFT JOIN sites s ON ua.site_id = s.id
+                WHERE ua.entity_id = %s AND (ua.site_id IS NULL OR ua.site_id = %s)
+            """, (unit["entity_id"], unit["site_id"]))
+            assignments = cur.fetchall()
+            role_assignments = {}
+            for a in assignments:
+                r = a["role_id"]
+                if r not in role_assignments:
+                    role_assignments[r] = []
+                site_str = f" - {a['site_name']}" if a['site_name'] else ""
+                role_assignments[r].append(f"Assigned: {a['full_name']} ({a['entity_code']}{site_str})")
+            
+    finally:
+        conn.close()
+    
+    return render_template("workpaper_form.html", mode="edit", unit=unit, entities=entities, sites=sites, roles=roles, bands=bands, authority_rows=authority_rows, matrix=matrix, buyer_row=buyer_row, creator_row=creator_row, ses=ses, role_assignments=role_assignments)
+
+@app.route("/workpapers/<int:unit_id>/delete", methods=["POST"])
+def delete_workpaper(unit_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM work_units WHERE id = %s", (unit_id,))
+            conn.commit()
+            flash("Kertas kerja berhasil dihapus.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash("Gagal menghapus kertas kerja.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("workpapers"))
 
 # ---------- Changelog ----------
 
@@ -646,6 +1199,241 @@ def export():
         download_name=filename,
     )
 
+
+# ---------- Entities CRUD ----------
+
+@app.route("/entities")
+def entities_list():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM entities ORDER BY code")
+            entities = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template("entities.html", entities=entities)
+
+@app.route("/entities/new", methods=["GET", "POST"])
+def new_entity():
+    if request.method == "POST":
+        code = request.form.get("code", "").strip().upper()
+        name = request.form.get("name", "").strip()
+        exchange_rate_idr = request.form.get("exchange_rate_idr", 16000)
+        
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO entities (code, name, exchange_rate_idr) VALUES (%s, %s, %s)",
+                    (code, name, exchange_rate_idr)
+                )
+                log_change(conn, session["full_name"], "CREATE", entity_code=code, field_changed="Entity", old_value=None, new_value=name)
+                conn.commit()
+                flash("Entity created successfully.", "success")
+                return redirect(url_for("entities_list"))
+        except Exception as e:
+            conn.rollback()
+            flash("Error creating entity. Code might already exist.", "error")
+        finally:
+            conn.close()
+    return render_template("entity_form.html", mode="create", entity=None)
+
+@app.route("/entities/<int:entity_id>/edit", methods=["GET", "POST"])
+def edit_entity(entity_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM entities WHERE id = %s", (entity_id,))
+            entity = cur.fetchone()
+            if not entity:
+                flash("Entity not found.", "error")
+                return redirect(url_for("entities_list"))
+            
+            if request.method == "POST":
+                code = request.form.get("code", "").strip().upper()
+                name = request.form.get("name", "").strip()
+                exchange_rate_idr = request.form.get("exchange_rate_idr", 16000)
+                try:
+                    cur.execute(
+                        "UPDATE entities SET code=%s, name=%s, exchange_rate_idr=%s WHERE id=%s",
+                        (code, name, exchange_rate_idr, entity_id)
+                    )
+                    log_change(conn, session["full_name"], "UPDATE", entity_code=code, field_changed="Entity details", old_value=entity["name"], new_value=name)
+                    conn.commit()
+                    flash("Entity updated.", "success")
+                    return redirect(url_for("entities_list"))
+                except Exception as e:
+                    conn.rollback()
+                    flash("Error updating entity.", "error")
+    finally:
+        conn.close()
+    return render_template("entity_form.html", mode="edit", entity=entity)
+
+@app.route("/entities/<int:entity_id>/delete", methods=["POST"])
+def delete_entity(entity_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM entities WHERE id = %s", (entity_id,))
+            entity = cur.fetchone()
+            if entity:
+                cur.execute("DELETE FROM entities WHERE id = %s", (entity_id,))
+                log_change(conn, session["full_name"], "DELETE", entity_code=entity["code"], field_changed="Entity", old_value=entity["name"], new_value=None)
+                conn.commit()
+                flash("Entity deleted.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash("Cannot delete entity. It might be used in other records.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("entities_list"))
+
+
+# ---------- Sites CRUD ----------
+
+@app.route("/sites")
+def sites_list():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT s.id, s.name, e.code as entity_code 
+                FROM sites s JOIN entities e ON s.entity_id = e.id 
+                ORDER BY e.code, s.name
+            """)
+            sites = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template("sites.html", sites=sites)
+
+@app.route("/sites/new", methods=["GET", "POST"])
+def new_site():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, code, name FROM entities ORDER BY code")
+            entities = cur.fetchall()
+            if request.method == "POST":
+                entity_id = request.form.get("entity_id")
+                name = request.form.get("name", "").strip()
+                try:
+                    cur.execute("INSERT INTO sites (entity_id, name) VALUES (%s, %s)", (entity_id, name))
+                    e_code = next(e["code"] for e in entities if str(e["id"]) == str(entity_id))
+                    log_change(conn, session["full_name"], "CREATE", entity_code=e_code, field_changed="Site", old_value=None, new_value=name)
+                    conn.commit()
+                    flash("Site created.", "success")
+                    return redirect(url_for("sites_list"))
+                except Exception as e:
+                    conn.rollback()
+                    flash("Error creating site.", "error")
+    finally:
+        conn.close()
+    return render_template("site_form.html", mode="create", site=None, entities=entities)
+
+@app.route("/sites/<int:site_id>/edit", methods=["GET", "POST"])
+def edit_site(site_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM sites WHERE id = %s", (site_id,))
+            site = cur.fetchone()
+            if not site:
+                flash("Site not found.", "error")
+                return redirect(url_for("sites_list"))
+            
+            cur.execute("SELECT id, code, name FROM entities ORDER BY code")
+            entities = cur.fetchall()
+            
+            if request.method == "POST":
+                entity_id = request.form.get("entity_id")
+                name = request.form.get("name", "").strip()
+                try:
+                    cur.execute("UPDATE sites SET entity_id=%s, name=%s WHERE id=%s", (entity_id, name, site_id))
+                    e_code = next(e["code"] for e in entities if str(e["id"]) == str(entity_id))
+                    log_change(conn, session["full_name"], "UPDATE", entity_code=e_code, field_changed="Site", old_value=site["name"], new_value=name)
+                    conn.commit()
+                    flash("Site updated.", "success")
+                    return redirect(url_for("sites_list"))
+                except Exception as e:
+                    conn.rollback()
+                    flash("Error updating site.", "error")
+    finally:
+        conn.close()
+    return render_template("site_form.html", mode="edit", site=site, entities=entities)
+
+@app.route("/sites/<int:site_id>/delete", methods=["POST"])
+def delete_site(site_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT s.*, e.code as e_code FROM sites s JOIN entities e ON s.entity_id=e.id WHERE s.id = %s", (site_id,))
+            site = cur.fetchone()
+            if site:
+                cur.execute("DELETE FROM sites WHERE id = %s", (site_id,))
+                log_change(conn, session["full_name"], "DELETE", entity_code=site["e_code"], field_changed="Site", old_value=site["name"], new_value=None)
+                conn.commit()
+                flash("Site deleted.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash("Cannot delete site. It might be used in other records.", "error")
+    finally:
+        conn.close()
+    return redirect(url_for("sites_list"))
+
+
+# ---------- Employees CRUD (Bulk Edit over user_assignments) ----------
+
+@app.route("/employees/edit", methods=["GET", "POST"])
+def edit_employee():
+    old_email = request.args.get("email")
+    if not old_email:
+        return redirect(url_for("employees"))
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT full_name, email FROM user_assignments WHERE email = %s LIMIT 1", (old_email,))
+            emp = cur.fetchone()
+            if not emp:
+                flash("Employee not found.", "error")
+                return redirect(url_for("employees"))
+            
+            if request.method == "POST":
+                new_name = request.form.get("full_name", "").strip()
+                new_email = request.form.get("email", "").strip()
+                
+                if new_name and new_email:
+                    try:
+                        cur.execute("UPDATE user_assignments SET full_name=%s, email=%s WHERE email=%s", (new_name, new_email, old_email))
+                        log_change(conn, session["full_name"], "UPDATE", entity_code="ALL", field_changed="Employee", old_value=old_email, new_value=new_email)
+                        conn.commit()
+                        flash(f"Updated records for {new_name}.", "success")
+                        return redirect(url_for("employees"))
+                    except Exception as e:
+                        conn.rollback()
+                        flash("Error updating employee records. Email might conflict with another existing user.", "error")
+    finally:
+        conn.close()
+
+    return render_template("employee_form.html", employee=emp)
+
+@app.route("/employees/delete", methods=["POST"])
+def delete_employee():
+    email = request.args.get("email")
+    if email:
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM user_assignments WHERE email = %s", (email,))
+                log_change(conn, session["full_name"], "DELETE", entity_code="ALL", field_changed="Employee", old_value=email, new_value=None)
+                conn.commit()
+                flash(f"Deleted all assignments for {email}.", "success")
+        except Exception as e:
+            conn.rollback()
+            flash("Error deleting employee.", "error")
+        finally:
+            conn.close()
+    return redirect(url_for("employees"))
 
 if __name__ == "__main__":
     app.run(debug=True)

@@ -1,4 +1,19 @@
 {% extends "base.html" %}
+{% macro render_band(bobj, is_usd=True) %}
+  <div class="flex items-center gap-1 whitespace-nowrap {{ 'font-bold text-gray-800 text-[11px]' if is_usd else 'font-medium text-black text-[10px]' }}">
+    {% if bobj.op == '<' %}
+      <span class="text-gray-400 font-normal tracking-tighter">&lt;</span>
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.max }}</span>
+    {% elif bobj.op == '>=' %}
+      <span class="text-gray-400 font-normal tracking-tighter">&ge;</span>
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.min }}</span>
+    {% else %}
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.min }}</span>
+      <span class="text-gray-400 font-normal tracking-tighter">- &lt;</span>
+      <span class="px-1 py-0.5 bg-gray-100 border border-gray-200 rounded">{{ bobj.max }}</span>
+    {% endif %}
+  </div>
+{% endmacro %}
 {% block title %}{{ unit.code }} — Kertas Kerja{% endblock %}
 {% block content %}
 
@@ -8,15 +23,25 @@
     <form method="get" onchange="location.href='/workpapers/'+this.unit.value" class="text-sm">
       <select name="unit" class="border border-gray-300 rounded-md px-2 py-1 text-sm">
         {% for u in all_units %}
-          <option value="{{ u.code }}" {% if u.code == unit.code %}selected{% endif %}>{{ u.code }} — {{ u.project_name }}</option>
+          <option value="{{ u.code }}" {% if u.code == unit.code %}selected{% endif %}>{{ u.code }} — {{ u.site_name or u.project_name }}</option>
         {% endfor %}
       </select>
+    </form>
+    <a href="{{ url_for('edit_workpaper', code=unit.code) }}" class="text-sm border border-gray-300 rounded-md px-3 py-1 bg-white hover:bg-gray-50 text-gray-700">Edit</a>
+    <form method="post" action="{{ url_for('delete_workpaper', unit_id=unit.id) }}" onsubmit="return confirm('Apakah Anda yakin ingin menghapus Kertas Kerja ini? Semua matriks dan aturan di dalamnya akan hilang.')">
+      <button type="submit" class="text-sm border border-red-300 rounded-md px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600">Delete</button>
     </form>
     <button onclick="window.print()" class="text-sm border border-gray-300 rounded-md px-3 py-1 hover:bg-gray-100">Print / PDF</button>
   </div>
 </div>
 
-<div class="bg-white border border-gray-300 rounded-lg overflow-hidden print-sheet">
+<div class="bg-white border border-gray-300 rounded-lg overflow-hidden print-sheet relative z-0">
+  
+  <!-- Watermark -->
+  <div class="absolute inset-0 z-[-1] flex items-center justify-center pointer-events-none opacity-[0.03]">
+    <img src="{{ url_for('static', filename='img/logo-watermark.png') }}" class="w-2/3 object-contain" alt="">
+  </div>
+
   <!-- Header -->
   <div class="grid grid-cols-2 border-b border-gray-300 text-sm">
     <div class="px-4 py-2 border-r border-gray-300">
@@ -25,7 +50,7 @@
     </div>
     <div class="px-4 py-2">
       <span class="text-[11px] uppercase tracking-wide text-gray-500">Proyek / Project</span>
-      <div class="font-semibold text-gray-900">{{ unit.project_name }}</div>
+      <div class="font-semibold text-gray-900">{{ unit.site_name or unit.project_name }}</div>
     </div>
   </div>
 
@@ -41,12 +66,20 @@
           <th class="border border-gray-300 px-2 py-1 text-left">Name / Nama</th>
           <th class="border border-gray-300 px-2 py-1 text-left w-52">Position</th>
           {% for b in bands %}
-            {% set parts = b.label.split(' or ') %}
-            <th class="border border-gray-300 px-1 py-1 text-center align-bottom w-16">
-              <div class="font-semibold">{{ parts[0] }}</div>
-              {% if parts|length > 1 %}<div class="font-normal text-gray-400 text-[10px]">{{ parts[1] }}</div>{% endif %}
+            <th class="border border-gray-300 px-1 py-1 align-bottom h-52 w-16 bg-white">
+              <div class="w-full flex justify-center pb-2">
+                <div class="[writing-mode:vertical-rl] rotate-180 text-left">
+                  <div class="mb-2">
+                    {{ render_band(b.label.usd, true) }}
+                  </div>
+                  <div>
+                    {{ render_band(b.label.idr, false) }}
+                  </div>
+                </div>
+              </div>
             </th>
           {% endfor %}
+          <th class="border border-gray-300 px-2 py-1 text-left w-48">Comment / Komentar</th>
         </tr>
       </thead>
       <tbody>
@@ -54,17 +87,21 @@
         <tr>
           <td class="border border-gray-300 px-2 py-1 font-medium">{{ r.level_label }}</td>
           <td class="border border-gray-300 px-2 py-1">
-            {{ r.person_name or '—' }}
-            {% if r.comment %}<div class="text-[10px] text-amber-600">{{ r.comment }}</div>{% endif %}
+            {% if r.dynamic_names %}
+              {{ r.dynamic_names }}
+            {% else %}
+              <span class="text-red-500 font-semibold">[No Active User Assigned]</span>
+            {% endif %}
           </td>
           <td class="border border-gray-300 px-2 py-1 text-gray-600">{{ r.position or '' }}</td>
           {% for b in bands %}
             {% set req = matrix.get((r.id, b.id)) %}
             <td class="border border-gray-300 px-1 py-1 text-center
                        {{ 'bg-green-50 text-green-700 font-semibold' if req else 'text-gray-300' }}">
-              {{ '✓' if req else '·' }}
+              {{ 'Y' if req else 'N' }}
             </td>
           {% endfor %}
+          <td class="border border-gray-300 px-2 py-1 text-[10px] text-gray-600">{{ r.comment or '' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -75,11 +112,15 @@
   <div class="grid grid-cols-1 sm:grid-cols-2 gap-px bg-gray-300 border-t border-gray-300 text-xs">
     <div class="bg-white px-4 py-2">
       <span class="text-[11px] uppercase tracking-wide text-gray-500">Buyer</span>
-      <div class="text-gray-900">{{ buyer_row.person_name if buyer_row else '—' }}</div>
+      <div class="text-gray-900">
+        {% if buyer_row and buyer_row.dynamic_names %}{{ buyer_row.dynamic_names }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+      </div>
     </div>
     <div class="bg-white px-4 py-2">
       <span class="text-[11px] uppercase tracking-wide text-gray-500">Purchase Request Creator</span>
-      <div class="text-gray-900">{{ creator_row.person_name if creator_row else '—' }}</div>
+      <div class="text-gray-900">
+        {% if creator_row and creator_row.dynamic_names %}{{ creator_row.dynamic_names }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+      </div>
     </div>
   </div>
 
@@ -100,9 +141,16 @@
         {% for b in bands %}
         {% set s = ses.get(b.id) %}
         <tr>
-          <td class="border border-gray-300 px-2 py-1">{{ b.label }}</td>
-          <td class="border border-gray-300 px-2 py-1">{{ s.creator_name if s else '—' }}</td>
-          <td class="border border-gray-300 px-2 py-1">{{ s.approver_name if s else '—' }}</td>
+          <td class="border border-gray-300 px-2 py-1">
+            <div class="mb-1">{{ render_band(b.label.usd, true) }}</div>
+            <div>{{ render_band(b.label.idr, false) }}</div>
+          </td>
+          <td class="border border-gray-300 px-2 py-1">
+            {% if s and s.dynamic_creator %}{{ s.dynamic_creator }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+          </td>
+          <td class="border border-gray-300 px-2 py-1">
+            {% if s and s.dynamic_approver %}{{ s.dynamic_approver }}{% else %}<span class="text-red-500 font-semibold">[No Active User Assigned]</span>{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -112,9 +160,13 @@
 
 <style>
   @media print {
+    @page { size: landscape; margin: 10mm; }
+    body { background-color: white !important; }
     .no-print { display: none !important; }
     nav { display: none !important; }
-    .print-sheet { border: none; }
+    .print-sheet { border: none !important; box-shadow: none !important; }
+    /* Ensure watermark prints properly */
+    .print-sheet > .absolute { opacity: 0.05 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
 {% endblock %}

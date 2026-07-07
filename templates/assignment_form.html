@@ -7,16 +7,32 @@
       class="space-y-4 max-w-lg"
       action="{{ url_for('edit_assignment', assignment_id=assignment.id) if mode == 'edit' else url_for('new_assignment') }}">
 
-  <div>
-    <label class="block text-sm font-medium mb-1">Full Name</label>
-    <input type="text" name="full_name" required value="{{ assignment.full_name or '' }}"
-           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+  <div class="mb-4">
+    <label class="block text-sm font-medium mb-1">Select Employee</label>
+    <select id="employee_selector" class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+      <option value="">-- Type New Employee --</option>
+      {% for emp in employees_list %}
+        <option value="{{ emp.email }}" data-name="{{ emp.full_name }}" 
+                {% if assignment and assignment.email == emp.email %}selected{% endif %}>
+          {{ emp.full_name }} ({{ emp.email }})
+        </option>
+      {% endfor %}
+    </select>
+    <p class="text-xs text-gray-500 mt-1">Select an existing employee or leave blank to enter a new one below.</p>
   </div>
 
-  <div>
-    <label class="block text-sm font-medium mb-1">Email</label>
-    <input type="email" name="email" required value="{{ assignment.email or '' }}"
-           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+  <div class="bg-gray-50 p-4 rounded-md border border-gray-200 mb-4 space-y-4">
+    <div>
+      <label class="block text-sm font-medium mb-1">Full Name</label>
+      <input type="text" name="full_name" id="full_name" required value="{{ assignment.full_name or '' }}"
+             class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-gray-900">
+    </div>
+  
+    <div>
+      <label class="block text-sm font-medium mb-1">Email</label>
+      <input type="email" name="email" id="email" required value="{{ assignment.email or '' }}"
+             class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-gray-900">
+    </div>
   </div>
 
   <div>
@@ -102,6 +118,32 @@
       centralizedNote.classList.add('hidden');
     }
   }
+
+  var employeeSelect = document.getElementById('employee_selector');
+  var fullNameInput = document.getElementById('full_name');
+  var emailInput = document.getElementById('email');
+
+  function updateEmployeeFields() {
+    var opt = employeeSelect.options[employeeSelect.selectedIndex];
+    if (opt && opt.value !== '') {
+      emailInput.value = opt.value;
+      fullNameInput.value = opt.dataset.name;
+      emailInput.readOnly = true;
+      emailInput.classList.add('bg-gray-100');
+    } else {
+      if(employeeSelect.dataset.initialLoad !== "1") {
+        emailInput.value = '';
+        fullNameInput.value = '';
+      }
+      emailInput.readOnly = false;
+      emailInput.classList.remove('bg-gray-100');
+    }
+    employeeSelect.dataset.initialLoad = "0";
+  }
+
+  employeeSelect.dataset.initialLoad = "1";
+  employeeSelect.addEventListener('change', updateEmployeeFields);
+  updateEmployeeFields(); // Run on load
 
   entitySelect.addEventListener('change', filterSitesByEntity);
   roleSelect.addEventListener('change', applyCentralizedRule);

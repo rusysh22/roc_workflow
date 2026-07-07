@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Amount Tiers / Limits{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold">Master Data: Amount Tiers (Limit Approval)</h1>
+  <a href="{{ url_for('new_amount_tier') }}" class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">
+    + Tambah Limit Baru
+  </a>
+</div>
+<p class="text-sm text-gray-500 mb-6">
+  Tabel ini mengatur batasan nominal (dalam USD) yang menentukan struktur kolom di Matriks Kertas Kerja.<br>
+  Jika Anda menambah atau mengubah Tier di sini, kolom tersebut akan otomatis terbentuk di seluruh Kertas Kerja secara dinamis!
+</p>
+
+<div class="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+  <table class="min-w-full text-sm divide-y divide-gray-200">
+    <thead class="bg-gray-50">
+      <tr>
+        <th class="px-6 py-3 text-left font-medium text-gray-500 uppercase tracking-wider">Sequence / Urutan</th>
+        <th class="px-6 py-3 text-left font-medium text-gray-500 uppercase tracking-wider">Applicable Entity</th>
+        <th class="px-6 py-3 text-left font-medium text-gray-500 uppercase tracking-wider">Batas Bawah (Min USD)</th>
+        <th class="px-6 py-3 text-left font-medium text-gray-500 uppercase tracking-wider">Batas Atas (Max USD)</th>
+        <th class="px-6 py-3 text-right font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-200">
+      {% for t in tiers %}
+      <tr class="hover:bg-gray-50">
+        <td class="px-6 py-4 whitespace-nowrap">{{ t.seq }}</td>
+        <td class="px-6 py-4 whitespace-nowrap">
+          {% if t.entity_count == t.total_entities and t.site_count == t.total_sites %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">Global (All)</span>
+          {% elif t.entity_count == 0 %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Disabled</span>
+          {% else %}
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+              {{ t.entity_count }} Entity, {{ t.site_count }} Site
+            </span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-gray-600">${{ "{:,.0f}".format(t.min_usd) }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-gray-600">
+          {% if t.max_usd %}${{ "{:,.0f}".format(t.max_usd) }}{% else %}<i>Unlimited</i>{% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+          <a href="{{ url_for('edit_amount_tier', tier_id=t.id) }}" class="text-blue-600 hover:text-blue-900 mr-3">Edit</a>
+          <form method="post" action="{{ url_for('delete_amount_tier', tier_id=t.id) }}" class="inline" onsubmit="return confirm('Yakin ingin menghapus limit ini?');">
+            <button type="submit" class="text-red-600 hover:text-red-900">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="px-6 py-8 text-center text-gray-400">Belum ada data Amount Tier.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

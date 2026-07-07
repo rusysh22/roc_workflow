@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Edit Employee{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <a href="{{ url_for('employees') }}" class="text-sm text-gray-500 hover:text-gray-900">&larr; Back to Employees</a>
+</div>
+
+<h1 class="text-xl font-semibold mb-6">Edit Employee</h1>
+<p class="text-sm text-gray-600 mb-6 max-w-lg">
+  Updating an employee's details here will automatically update their name and email across all of their assignments in the system.
+</p>
+
+<form method="post" class="bg-white border border-gray-200 rounded-lg p-6 max-w-lg">
+  <div class="mb-4">
+    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+    <input type="text" name="full_name" value="{{ employee.full_name }}" required
+           class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+  </div>
+  
+  <div class="mb-6">
+    <label class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+    <input type="email" name="email" value="{{ employee.email }}" required
+           class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+  </div>
+
+  <div class="flex justify-end gap-3">
+    <a href="{{ url_for('employees') }}" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">Cancel</a>
+    <button type="submit" class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">
+      Save Changes
+    </button>
+  </div>
+</form>
+{% endblock %}
