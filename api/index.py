@@ -3,15 +3,104 @@ import sys
 from datetime import datetime
 
 import psycopg2
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from lib.auth import get_user_by_email, set_password, verify_password  # noqa: E402
 from lib.db import get_db_connection, log_change  # noqa: E402
 from lib.export import build_export_workbook  # noqa: E402
 
 app = Flask(__name__, template_folder="../templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
+
+PUBLIC_ENDPOINTS = {"login", "static"}
+
+
+def _safe_next(path):
+    """Only allow same-site relative redirects (blocks open-redirect via ?next=)."""
+    if path and path.startswith("/") and not path.startswith("//"):
+        return path
+    return None
+
+
+@app.before_request
+def require_login():
+    if request.endpoint in PUBLIC_ENDPOINTS or request.endpoint is None:
+        return None
+    if not session.get("user_id"):
+        return redirect(url_for("login", next=request.path))
+    if session.get("must_change_password") and request.endpoint != "change_password":
+        return redirect(url_for("change_password"))
+    return None
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("user_id"):
+        return redirect(url_for("home"))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        next_path = request.form.get("next") or ""
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                user = get_user_by_email(cur, email)
+        finally:
+            conn.close()
+
+        if not verify_password(user, password):
+            flash("Email atau password salah.", "error")
+            return render_template("login.html", email=email, next=next_path)
+
+        session.clear()
+        session["user_id"] = user["id"]
+        session["full_name"] = user["full_name"]
+        session["email"] = user["email"]
+        session["must_change_password"] = user["must_change_password"]
+        return redirect(_safe_next(next_path) or url_for("home"))
+
+    return render_template("login.html", email="", next=request.args.get("next", ""))
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    flash("Anda telah logout.", "success")
+    return redirect(url_for("login"))
+
+
+@app.route("/account/password", methods=["GET", "POST"])
+def change_password():
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                user = get_user_by_email(cur, session["email"])
+
+            if not verify_password(user, current_password):
+                flash("Password saat ini salah.", "error")
+            elif len(new_password) < 8:
+                flash("Password baru minimal 8 karakter.", "error")
+            elif new_password != confirm_password:
+                flash("Konfirmasi password tidak cocok.", "error")
+            else:
+                set_password(conn, user["id"], new_password)
+                conn.commit()
+                session["must_change_password"] = False
+                flash("Password berhasil diubah.", "success")
+                return redirect(url_for("home"))
+        finally:
+            conn.close()
+
+    return render_template("change_password.html", forced=session.get("must_change_password", False))
 
 ENTITY_BADGE_COLORS = {
     "IMU": "blue",
@@ -165,7 +254,6 @@ def assignments():
 
 
 def _read_assignment_form(cur, roles):
-    admin_name = request.form.get("admin_name", "").strip()
     full_name = request.form.get("full_name", "").strip()
     email = request.form.get("email", "").strip()
     entity_id = request.form.get("entity_id") or ""
@@ -174,8 +262,6 @@ def _read_assignment_form(cur, roles):
     is_active = "is_active" in request.form
 
     errors = []
-    if not admin_name:
-        errors.append("Changed by is required.")
     if not full_name:
         errors.append("Full name is required.")
     if not email:
@@ -192,7 +278,6 @@ def _read_assignment_form(cur, roles):
         errors.append("Site is required.")
 
     return {
-        "admin_name": admin_name,
         "full_name": full_name,
         "email": email,
         "entity_id": entity_id,
@@ -207,7 +292,6 @@ def _sticky_assignment(data, extra=None):
     sticky = {
         "full_name": data["full_name"],
         "email": data["email"],
-        "admin_name": data["admin_name"],
         "entity_id": int(data["entity_id"]) if data["entity_id"] else None,
         "role_id": int(data["role_id"]) if data["role_id"] else None,
         "site_id": int(data["site_id"]) if data["site_id"] else None,
@@ -248,7 +332,7 @@ def new_assignment():
                     entity_code = next(e["code"] for e in entities if e["id"] == int(data["entity_id"]))
                     role_name = data["role_row"]["name"] if data["role_row"] else ""
                     log_change(
-                        conn, data["admin_name"], "CREATE", entity_code=entity_code,
+                        conn, session["full_name"], "CREATE", entity_code=entity_code,
                         field_changed=None, old_value=None,
                         new_value=f"{data['full_name']} - {role_name}",
                     )
@@ -342,7 +426,7 @@ def edit_assignment(assignment_id):
                     )
                     for field, old_value, new_value in diffs:
                         log_change(
-                            conn, data["admin_name"], "UPDATE", entity_code=new_entity_code,
+                            conn, session["full_name"], "UPDATE", entity_code=new_entity_code,
                             field_changed=field,
                             old_value=str(old_value) if old_value is not None else None,
                             new_value=str(new_value) if new_value is not None else None,
@@ -372,8 +456,6 @@ def edit_assignment(assignment_id):
 
 @app.route("/assignments/<int:assignment_id>/delete", methods=["POST"])
 def delete_assignment(assignment_id):
-    admin_name = request.form.get("admin_name", "").strip() or "Unknown"
-
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
@@ -394,7 +476,7 @@ def delete_assignment(assignment_id):
 
             cur.execute("DELETE FROM user_assignments WHERE id = %s", (assignment_id,))
             log_change(
-                conn, admin_name, "DELETE", entity_code=existing["entity_code"],
+                conn, session["full_name"], "DELETE", entity_code=existing["entity_code"],
                 field_changed=None,
                 old_value=f"{existing['full_name']} - {existing['role_name']}",
                 new_value=None,

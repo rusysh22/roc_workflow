@@ -9,12 +9,19 @@
 <body class="bg-gray-50 text-gray-900">
   <nav class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
     <a href="{{ url_for('home') }}" class="font-semibold text-lg text-gray-900">Authority Matrix</a>
-    <div class="space-x-4 text-sm">
+    <div class="flex items-center gap-4 text-sm">
       <a href="{{ url_for('home') }}" class="text-gray-600 hover:text-gray-900">Dashboard</a>
       <a href="{{ url_for('workpapers') }}" class="text-gray-600 hover:text-gray-900">Kertas Kerja</a>
       <a href="{{ url_for('assignments') }}" class="text-gray-600 hover:text-gray-900">Assignments</a>
       <a href="{{ url_for('changelog') }}" class="text-gray-600 hover:text-gray-900">Changelog</a>
       <a href="{{ url_for('export') }}" class="text-gray-600 hover:text-gray-900">Export</a>
+      {% if session.get('full_name') %}
+        <span class="text-gray-300">|</span>
+        <a href="{{ url_for('change_password') }}" class="text-gray-500 hover:text-gray-900">{{ session['full_name'] }}</a>
+        <form method="post" action="{{ url_for('logout') }}" class="inline">
+          <button type="submit" class="text-gray-500 hover:text-gray-900">Logout</button>
+        </form>
+      {% endif %}
     </div>
   </nav>
 
@@ -34,18 +41,5 @@
     {% block content %}{% endblock %}
   </main>
 
-  <script>
-    function confirmDelete(form) {
-      if (!window.confirm('Delete this assignment? This cannot be undone.')) {
-        return false;
-      }
-      var name = window.prompt('Your name (for the audit log):');
-      if (!name) {
-        return false;
-      }
-      form.querySelector('.admin-name-field').value = name;
-      return true;
-    }
-  </script>
 </body>
 </html>
