@@ -1,23 +1,35 @@
-CREATE TABLE entities (
+-- Safe to re-run at any time: every statement is idempotent, so this file
+-- can be used both to create the schema from scratch and to bring an older
+-- deployment (e.g. one seeded before the users/kertas-kerja tables existed)
+-- up to date without erroring on tables that already exist.
+
+CREATE TABLE IF NOT EXISTS entities (
   id SERIAL PRIMARY KEY,
   code VARCHAR(20) UNIQUE NOT NULL,
   name TEXT NOT NULL,
   exchange_rate_idr NUMERIC(14,2) NOT NULL DEFAULT 16000
 );
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS exchange_rate_idr NUMERIC(14,2) NOT NULL DEFAULT 16000;
 
-CREATE TABLE sites (
+CREATE TABLE IF NOT EXISTS sites (
   id SERIAL PRIMARY KEY,
   entity_id INTEGER REFERENCES entities(id),
   name TEXT NOT NULL
 );
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sites_entity_id_name_key') THEN
+    ALTER TABLE sites ADD CONSTRAINT sites_entity_id_name_key UNIQUE (entity_id, name);
+  END IF;
+END $$;
 
-CREATE TABLE roles (
+CREATE TABLE IF NOT EXISTS roles (
   id SERIAL PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   is_centralized BOOLEAN DEFAULT FALSE
 );
 
-CREATE TABLE user_assignments (
+CREATE TABLE IF NOT EXISTS user_assignments (
   id SERIAL PRIMARY KEY,
   full_name TEXT NOT NULL,
   email TEXT NOT NULL,
@@ -30,7 +42,7 @@ CREATE TABLE user_assignments (
   UNIQUE(email, entity_id, role_id)
 );
 
-CREATE TABLE approval_levels (
+CREATE TABLE IF NOT EXISTS approval_levels (
   id SERIAL PRIMARY KEY,
   entity_id INTEGER REFERENCES entities(id),
   level_order INTEGER NOT NULL,
@@ -38,7 +50,7 @@ CREATE TABLE approval_levels (
   label TEXT NOT NULL
 );
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
@@ -49,7 +61,7 @@ CREATE TABLE users (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE changelog (
+CREATE TABLE IF NOT EXISTS changelog (
   id SERIAL PRIMARY KEY,
   admin_name TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -67,7 +79,7 @@ CREATE TABLE changelog (
 -- ============================================================
 
 -- One row per workbook sheet, e.g. IMU-FIN, IMN-SBY.
-CREATE TABLE work_units (
+CREATE TABLE IF NOT EXISTS work_units (
   id SERIAL PRIMARY KEY,
   entity_id INTEGER REFERENCES entities(id),
   code TEXT UNIQUE NOT NULL,
@@ -78,7 +90,7 @@ CREATE TABLE work_units (
 -- Master scale of USD purchasing-authority tiers (columns of the matrix).
 -- Shared by every entity; each entity's own exchange_rate_idr converts a
 -- tier's USD bounds into the Rupiah figure shown alongside it.
-CREATE TABLE amount_tiers (
+CREATE TABLE IF NOT EXISTS amount_tiers (
   id SERIAL PRIMARY KEY,
   seq INTEGER UNIQUE NOT NULL,
   min_usd NUMERIC(18,2) NOT NULL,
@@ -87,7 +99,7 @@ CREATE TABLE amount_tiers (
 
 -- Master list of job titles, referenced by workpaper_rows so the same
 -- title always reads identically across every unit.
-CREATE TABLE positions (
+CREATE TABLE IF NOT EXISTS positions (
   id SERIAL PRIMARY KEY,
   title TEXT UNIQUE NOT NULL
 );
@@ -96,7 +108,7 @@ CREATE TABLE positions (
 -- plus Buyer and PR Creator). row_kind: 'authority' | 'buyer' | 'creator'.
 -- The level itself is a role from the shared `roles` master table (the same
 -- one used by the Assignments module), not free text.
-CREATE TABLE workpaper_rows (
+CREATE TABLE IF NOT EXISTS workpaper_rows (
   id SERIAL PRIMARY KEY,
   work_unit_id INTEGER REFERENCES work_units(id) ON DELETE CASCADE,
   row_kind TEXT NOT NULL DEFAULT 'authority',
@@ -106,21 +118,25 @@ CREATE TABLE workpaper_rows (
   position_id INTEGER REFERENCES positions(id),
   comment TEXT
 );
+ALTER TABLE workpaper_rows ADD COLUMN IF NOT EXISTS role_id INTEGER REFERENCES roles(id);
+ALTER TABLE workpaper_rows ADD COLUMN IF NOT EXISTS position_id INTEGER REFERENCES positions(id);
 
 -- Y/N per tier for an authority row (the heart of the matrix).
-CREATE TABLE workpaper_authority (
+CREATE TABLE IF NOT EXISTS workpaper_authority (
   id SERIAL PRIMARY KEY,
   row_id INTEGER REFERENCES workpaper_rows(id) ON DELETE CASCADE,
   tier_id INTEGER REFERENCES amount_tiers(id),
   required BOOLEAN NOT NULL DEFAULT FALSE,
   UNIQUE(row_id, tier_id)
 );
+ALTER TABLE workpaper_authority ADD COLUMN IF NOT EXISTS tier_id INTEGER REFERENCES amount_tiers(id);
 
 -- Service Entry Sheet block: creator/approver per tier.
-CREATE TABLE ses_entries (
+CREATE TABLE IF NOT EXISTS ses_entries (
   id SERIAL PRIMARY KEY,
   work_unit_id INTEGER REFERENCES work_units(id) ON DELETE CASCADE,
   tier_id INTEGER REFERENCES amount_tiers(id),
   creator_name TEXT,
   approver_name TEXT
 );
+ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS tier_id INTEGER REFERENCES amount_tiers(id);
