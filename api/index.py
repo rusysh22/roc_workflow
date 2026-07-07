@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.auth import get_user_by_email, set_password, verify_password  # noqa: E402
 from lib.db import get_db_connection, log_change  # noqa: E402
 from lib.export import build_export_workbook  # noqa: E402
+from lib.money import format_tier_label  # noqa: E402
 
 app = Flask(__name__, template_folder="../templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
@@ -528,7 +529,7 @@ def workpaper_detail(code):
             cur.execute(
                 """
                 SELECT wu.id, wu.code, wu.project_name, wu.entity_id,
-                       e.code AS entity_code, e.name AS entity_name
+                       e.code AS entity_code, e.name AS entity_name, e.exchange_rate_idr
                 FROM work_units wu
                 JOIN entities e ON e.id = wu.entity_id
                 WHERE wu.code = %s
@@ -540,18 +541,25 @@ def workpaper_detail(code):
                 flash("Kertas kerja tidak ditemukan.", "error")
                 return redirect(url_for("workpapers"))
 
-            cur.execute(
-                "SELECT id, seq, label FROM threshold_bands WHERE entity_id = %s ORDER BY seq",
-                (unit["entity_id"],),
-            )
-            bands = cur.fetchall()
+            cur.execute("SELECT id, seq, min_usd, max_usd FROM amount_tiers ORDER BY seq")
+            bands = [
+                {
+                    "id": t["id"],
+                    "seq": t["seq"],
+                    "label": format_tier_label(t["min_usd"], t["max_usd"], unit["exchange_rate_idr"]),
+                }
+                for t in cur.fetchall()
+            ]
 
             cur.execute(
                 """
-                SELECT id, row_kind, seq, level_label, person_name, position, comment
-                FROM workpaper_rows
-                WHERE work_unit_id = %s
-                ORDER BY seq
+                SELECT wr.id, wr.row_kind, wr.seq, r.name AS level_label,
+                       wr.person_name, p.title AS position, wr.comment
+                FROM workpaper_rows wr
+                LEFT JOIN roles r ON r.id = wr.role_id
+                LEFT JOIN positions p ON p.id = wr.position_id
+                WHERE wr.work_unit_id = %s
+                ORDER BY wr.seq
                 """,
                 (unit["id"],),
             )
@@ -559,24 +567,24 @@ def workpaper_detail(code):
 
             cur.execute(
                 """
-                SELECT wa.row_id, wa.band_id, wa.required
+                SELECT wa.row_id, wa.tier_id, wa.required
                 FROM workpaper_authority wa
                 JOIN workpaper_rows wr ON wr.id = wa.row_id
                 WHERE wr.work_unit_id = %s
                 """,
                 (unit["id"],),
             )
-            matrix = {(m["row_id"], m["band_id"]): m["required"] for m in cur.fetchall()}
+            matrix = {(m["row_id"], m["tier_id"]): m["required"] for m in cur.fetchall()}
 
             cur.execute(
                 """
-                SELECT band_id, creator_name, approver_name
+                SELECT tier_id, creator_name, approver_name
                 FROM ses_entries
                 WHERE work_unit_id = %s
                 """,
                 (unit["id"],),
             )
-            ses = {s["band_id"]: s for s in cur.fetchall()}
+            ses = {s["tier_id"]: s for s in cur.fetchall()}
 
             cur.execute(
                 "SELECT code, project_name FROM work_units ORDER BY sort_order, code"
