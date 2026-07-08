@@ -42,7 +42,7 @@
 <div class="flex items-center justify-between mb-6">
   <div>
     <h1 class="text-xl font-semibold">{{ 'Create New Workpaper' if mode == 'create' else 'Edit Workpaper' }}</h1>
-    <p class="text-sm text-gray-500 mt-1">Select the entity, site, and set which Role is authorized for each limit/tier.</p>
+    <p class="text-sm text-gray-500 mt-1">Select the entity, site/unit, and set which Role is authorized for each limit/tier.</p>
   </div>
 </div>
 
@@ -65,15 +65,15 @@
         </p>
       </div>
       <div>
-        <label class="block text-sm font-medium mb-1">Site <span class="text-red-500">*</span></label>
+        <label class="block text-sm font-medium mb-1">Site/Unit <span class="text-red-500">*</span></label>
         <select name="site_id" id="site_id" required class="searchable-select w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
-          <option value="">-- Select Site --</option>
+          <option value="">-- Select Site/Unit --</option>
           {% for s in sites %}
             <option value="{{ s.id }}" data-entity="{{ s.entity_code }}" {% if unit and unit.site_id == s.id and unit.entity_id == s.entity_id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
           {% endfor %}
         </select>
         <p class="text-xs text-amber-600 mt-1" id="site_hint">
-          ⚠️ Select Site so the system can map the correct employees.
+          ⚠️ Select Site/Unit so the system can map the correct employees.
         </p>
       </div>
       <div>
@@ -375,34 +375,60 @@
   // Filter Site By Entity logic
   var entitySelect = document.getElementById('entity_id');
   var siteSelect = document.getElementById('site_id');
-  var siteOptions = Array.prototype.slice.call(siteSelect.options);
+  var selectedEntityCode = '';
+
+  // Snapshot the full, unfiltered list of site options exactly as rendered
+  // by the server (one entry per entity/site pairing). Select2 builds its
+  // popup from whatever <option> elements exist at (re)init time, so instead
+  // of trying to hide options in place (which Select2 ignores), we physically
+  // rebuild the <select>'s options to just the ones for the chosen entity.
+  var allSiteOptionsData = Array.prototype.slice.call(siteSelect.options)
+    .filter(function (opt) { return opt.value; })
+    .map(function (opt) {
+      return { value: opt.value, text: opt.text, entityCode: opt.dataset.entity || '' };
+    });
+
+  function renderSiteOptions() {
+    var currentValue = siteSelect.value;
+
+    siteSelect.innerHTML = '';
+    var placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '-- Select Site/Unit --';
+    siteSelect.appendChild(placeholder);
+
+    var stillValid = false;
+    allSiteOptionsData.forEach(function (o) {
+      if (selectedEntityCode && o.entityCode !== selectedEntityCode) return;
+      var opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.text;
+      opt.setAttribute('data-entity', o.entityCode);
+      siteSelect.appendChild(opt);
+      if (o.value === currentValue) stillValid = true;
+    });
+
+    // Select2 (v4) reads the <select>'s live <option> children each time its
+    // dropdown opens, and separately watches the `disabled` property on the
+    // element itself -- so both can just be set directly, no destroy/reinit
+    // needed. (An earlier version of this code destroyed/reinitialized the
+    // Select2 instance here, which left a stale disabled-looking widget
+    // behind instead of actually refreshing it.)
+    $(siteSelect).val(stillValid ? currentValue : '').trigger('change.select2');
+    $(siteSelect).prop('disabled', !selectedEntityCode);
+  }
 
   function filterSites() {
     var entityOpt = entitySelect.options[entitySelect.selectedIndex];
-    var entityCode = entityOpt && entityOpt.value ? entityOpt.text.split(' - ')[0].trim() : '';
-    siteOptions.forEach(function (opt) {
-      if (!opt.value) { opt.hidden = false; return; }
-      opt.hidden = !!entityCode && opt.dataset.entity !== entityCode;
-      if(opt.hidden && opt.selected) {
-         siteSelect.value = "";
-         if ($(siteSelect).data('select2')) $(siteSelect).trigger('change.select2');
-      }
-    });
+    selectedEntityCode = entityOpt && entityOpt.value ? entityOpt.text.split(' - ')[0].trim() : '';
+    renderSiteOptions();
     checkEntitySiteFilled();
   }
-  
+
   function checkEntitySiteFilled() {
     var entityId = entitySelect.value;
-    var isSiteRequired = false;
-    
-    // Check if there are any valid sites for this entity
-    for (var i = 0; i < siteSelect.options.length; i++) {
-       if (siteSelect.options[i].value && !siteSelect.options[i].hidden) {
-           isSiteRequired = true;
-           break;
-       }
-    }
-    
+    var isSiteRequired = siteSelect.options.length > 1; // more than just the placeholder
+
     var isFilled = false;
     if (entityId) {
         if (isSiteRequired) {
@@ -411,7 +437,7 @@
             isFilled = true;
         }
     }
-    
+
     // Enable/Disable role selects
     document.querySelectorAll('select').forEach(function(selectEl) {
         if (selectEl.name.includes('role') || selectEl.name.includes('ses_creator') || selectEl.name.includes('ses_approver')) {
@@ -419,7 +445,7 @@
         }
     });
   }
-  entitySelect.addEventListener('change', filterSites);
+  $(entitySelect).on('change', filterSites);
   
   // Filter Bands Dynamically
   var tierMappings = {{ tier_mappings | tojson | safe }};
@@ -451,8 +477,8 @@
     {% endfor %}
   }
 
-  entitySelect.addEventListener('change', updateVisibleBands);
-  siteSelect.addEventListener('change', updateVisibleBands);
+  $(entitySelect).on('change', updateVisibleBands);
+  $(siteSelect).on('change', updateVisibleBands);
 
   $(siteSelect).on('change', function() {
       checkEntitySiteFilled();
@@ -625,7 +651,7 @@
       html += '</ul></div>';
       return html;
     } else {
-      return '<div class="mt-1.5 p-2 bg-gray-50 border border-gray-100 rounded-md shadow-sm text-xs text-gray-400 italic">No employee assigned yet for this Entity/Site</div>';
+      return '<div class="mt-1.5 p-2 bg-gray-50 border border-gray-100 rounded-md shadow-sm text-xs text-gray-400 italic">No employee assigned yet for this Entity/Site/Unit</div>';
     }
   }
 
@@ -740,7 +766,7 @@
       e.preventDefault();
       document.getElementById('site_hint').style.display = '';
       document.getElementById('site_id').closest('div').scrollIntoView({ behavior: 'smooth' });
-      alert('Site is required.');
+      alert('Site/Unit is required.');
       return false;
     }
     {% if mode == 'edit' %}

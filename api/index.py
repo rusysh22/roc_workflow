@@ -9,7 +9,7 @@ import psycopg2
 from markupsafe import Markup, escape
 from psycopg2.extras import Json
 from werkzeug.security import generate_password_hash
-from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -706,9 +706,32 @@ def assignments():
             cur.execute(query, params)
             rows = cur.fetchall()
 
+            # Fix N+1 query issue by pre-fetching all work unit associations in one query
+            cur.execute("""
+                SELECT wu.entity_id, wr.role_id, wu.code
+                FROM work_units wu
+                JOIN workpaper_rows wr ON wr.work_unit_id = wu.id
+                UNION
+                SELECT wu.entity_id, se.creator_role_id AS role_id, wu.code
+                FROM work_units wu
+                JOIN ses_entries se ON se.work_unit_id = wu.id
+                WHERE se.creator_role_id IS NOT NULL
+                UNION
+                SELECT wu.entity_id, se.approver_role_id AS role_id, wu.code
+                FROM work_units wu
+                JOIN ses_entries se ON se.work_unit_id = wu.id
+                WHERE se.approver_role_id IS NOT NULL
+            """)
+            affected_map = {}
+            for map_row in cur.fetchall():
+                key = (map_row["entity_id"], map_row["role_id"])
+                if key not in affected_map:
+                    affected_map[key] = set()
+                affected_map[key].add(map_row["code"])
+
             for row in rows:
-                affected = get_affected_work_units(cur, row["entity_id"], row["role_id"])
-                row["affected_workpapers"] = [u["code"] for u in affected]
+                key = (row["entity_id"], row["role_id"])
+                row["affected_workpapers"] = sorted(list(affected_map.get(key, [])))
 
             entities, _sites, roles = get_lookup_data(cur)
             cur.execute("SELECT DISTINCT email, full_name FROM user_assignments ORDER BY full_name")
@@ -2434,26 +2457,37 @@ def edit_site(site_id):
 
 @app.route("/sites/<int:site_id>/delete", methods=["POST"])
 def delete_site(site_id):
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     conn = get_db_connection()
+    site_name = None
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT s.*, array_to_string(array_agg(e.code), ', ') as e_code 
-                FROM sites s 
+                SELECT s.*, array_to_string(array_agg(e.code), ', ') as e_code
+                FROM sites s
                 LEFT JOIN entity_sites es ON es.site_id = s.id
-                LEFT JOIN entities e ON e.id = es.entity_id 
+                LEFT JOIN entities e ON e.id = es.entity_id
                 WHERE s.id = %s
                 GROUP BY s.id
             """, (site_id,))
             site = cur.fetchone()
             if site:
+                site_name = site["name"]
                 cur.execute("DELETE FROM sites WHERE id = %s", (site_id,))
                 log_change(conn, session["full_name"], "DELETE", entity_code=site["e_code"], field_changed="Site", old_value=site["name"], new_value=None)
                 conn.commit()
+                if is_ajax:
+                    return jsonify(success=True, message=f"“{site_name}” deleted.")
                 flash("Site deleted.", "success")
+            elif is_ajax:
+                return jsonify(success=False, message="Site not found."), 404
     except Exception as e:
         conn.rollback()
-        flash("Cannot delete site. It might be used in other records.", "error")
+        label = f"“{site_name}”" if site_name else "Site"
+        message = f"Cannot delete {label}. It might be used in other records."
+        if is_ajax:
+            return jsonify(success=False, message=message), 400
+        flash(message, "error")
     finally:
         conn.close()
     return redirect(url_for("sites_list"))

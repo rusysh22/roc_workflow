@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Sites{% endblock %}
+{% block title %}Sites/Units{% endblock %}
 {% block content %}
 <div class="flex items-center justify-between mb-4">
-  <h1 class="text-xl font-semibold">Sites</h1>
+  <h1 class="text-xl font-semibold">Sites/Units</h1>
   <a href="{{ url_for('new_site') }}"
-     class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">+ Add Site</a>
+     class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">+ Add Site/Unit</a>
 </div>
 
 <div class="overflow-x-auto border border-gray-200 rounded-lg bg-white p-4">
@@ -12,7 +12,7 @@
     <thead class="bg-gray-100 text-left text-gray-600">
       <tr>
         <th class="px-4 py-2">Entity</th>
-        <th class="px-4 py-2">Site Name</th>
+        <th class="px-4 py-2">Site/Unit Name</th>
         <th class="px-4 py-2"></th>
       </tr>
     </thead>

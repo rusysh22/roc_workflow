@@ -98,11 +98,11 @@
 <!-- Version Log (collapsible) -->
 {% if version_log %}
 <details class="mb-4 no-print border border-gray-200 rounded-lg bg-white overflow-hidden">
-  <summary class="px-4 py-2.5 text-sm font-semibold text-gray-700 cursor-pointer hover:bg-gray-50 flex items-center justify-between">
+  <summary class="px-4 py-2.5 text-sm font-semibold text-gray-700 cursor-pointer hover:bg-gray-50 flex items-center justify-between sticky top-0 bg-white z-10">
     <span>📋 Version History ({{ version_log|length }} entries)</span>
     <span class="text-xs text-gray-400">click to expand</span>
   </summary>
-  <div class="divide-y divide-gray-100">
+  <div class="divide-y divide-gray-100 max-h-80 overflow-y-auto relative">
     {% for log in version_log %}
     {% set inner %}
       <div class="shrink-0 text-center w-20">
@@ -228,7 +228,7 @@
   
   <!-- Watermark -->
   <div class="absolute inset-0 z-[-1] flex items-center justify-center pointer-events-none opacity-[0.03]">
-    <img src="{{ url_for('static', filename='img/logo-watermark.png') }}" class="w-2/3 object-contain" alt="">
+    <img src="{{ url_for('static', filename='img/logo-interport.webp') }}" class="w-2/3 object-contain" alt="">
   </div>
 
   <!-- Header -->
@@ -349,13 +349,17 @@
 
 <style>
   @media print {
-    @page { size: portrait; margin: 8mm; }
+    @page { size: landscape; margin: 8mm; }
+    /* body/main are h-screen + overflow-hidden for the normal scrollable app
+       shell -- during print that clips anything past one screen's height
+       instead of flowing onto page 2+, so drop those constraints here. */
+    html, body { height: auto !important; overflow: visible !important; }
     body { background-color: white !important; }
     .no-print { display: none !important; }
-    main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+    main { padding: 0 !important; margin: 0 !important; max-width: none !important; overflow: visible !important; height: auto !important; }
     .print-sheet { border: none !important; box-shadow: none !important; }
-    /* Shrink the matrix so it fits a portrait page despite the many band columns */
-    .print-sheet table { font-size: 7px !important; }
+    /* Shrink the matrix so it fits a landscape page with many band columns */
+    .print-sheet table { font-size: 8px !important; }
     .print-sheet th, .print-sheet td { padding: 2px !important; }
     /* Ensure watermark prints properly */
     .print-sheet > .absolute { opacity: 0.05 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }

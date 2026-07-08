@@ -13,7 +13,7 @@
       <tr>
         <th class="px-4 py-2">Code</th>
         <th class="px-4 py-2">Name</th>
-        <th class="px-4 py-2">Sites</th>
+        <th class="px-4 py-2">Sites/Units</th>
         <th class="px-4 py-2">Exchange Rate (IDR)</th>
         <th class="px-4 py-2"></th>
       </tr>
@@ -32,7 +32,7 @@
                 <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {{ string_badge_class(site_name) }}">{{ site_name }}</span>
               {% endfor %}
             {% else %}
-              <span class="text-gray-400 italic text-xs">No Sites</span>
+              <span class="text-gray-400 italic text-xs">No Sites/Units</span>
             {% endif %}
           </div>
         </td>

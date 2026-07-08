@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Assignments{% endblock %}
 {% block content %}
+{% set user_role = session.get('role', 'super_admin') %}
 <div class="flex items-center justify-between mb-4">
   <h1 class="text-xl font-semibold">User Assignments</h1>
+  {% if user_role != 'portal_user' %}
   <a href="{{ url_for('new_assignment') }}"
      class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">+ Add Assignment</a>
+  {% endif %}
 </div>
 
 <form method="get" class="flex flex-wrap gap-3 mb-4 items-center">
@@ -32,12 +35,12 @@
     <thead class="bg-gray-100 text-left text-gray-600">
       <tr>
         <th class="px-4 py-2">Entity</th>
-        <th class="px-4 py-2">Site</th>
+        <th class="px-4 py-2">Site/Unit</th>
         <th class="px-4 py-2">Role</th>
         <th class="px-4 py-2">Name</th>
         <th class="px-4 py-2">Email</th>
         <th class="px-4 py-2">Status</th>
-        <th class="px-4 py-2"></th>
+        <th class="px-4 py-2 no-sort"></th>
       </tr>
     </thead>
     <tbody class="divide-y divide-gray-100">
@@ -79,6 +82,7 @@
                   data-is-active="{{ '1' if a.is_active else '0' }}"
                   data-workpapers="{{ a.affected_workpapers | join(',') }}">View</button>
           
+          {% if user_role != 'portal_user' %}
           <button type="button" class="text-purple-600 font-medium hover:text-purple-800 ml-3 reassign-assignment-btn"
                   data-id="{{ a.id }}" data-entity-code="{{ a.entity_code }}" 
                   data-site-name="{{ a.site_name or 'All Site/Unit Applied' }}" data-role-name="{{ a.role_name }}"
@@ -91,6 +95,7 @@
                 class="inline" onsubmit="return confirm('Delete this assignment? This cannot be undone.')">
             <button type="submit" class="text-red-500 font-medium hover:text-red-700 ml-3">Delete</button>
           </form>
+          {% endif %}
         </td>
       </tr>
       {% else %}
@@ -125,7 +130,7 @@
           <dd id="view_entity" class="text-gray-700"></dd>
         </div>
         <div>
-          <dt class="text-xs uppercase tracking-wide text-gray-400">Site</dt>
+          <dt class="text-xs uppercase tracking-wide text-gray-400">Site/Unit</dt>
           <dd id="view_site" class="text-gray-700"></dd>
         </div>
         <div>
@@ -166,7 +171,7 @@
             <span id="reassign_ctx_entity" class="font-bold text-gray-800"></span>
           </div>
           <div class="border-l border-gray-200">
-            <span class="block text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Site</span>
+            <span class="block text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Site/Unit</span>
             <span id="reassign_ctx_site" class="font-bold text-gray-800"></span>
           </div>
           <div class="border-l border-gray-200">

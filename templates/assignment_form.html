@@ -60,10 +60,10 @@
   </div>
 
   <div id="site_field">
-    <label class="block text-sm font-medium mb-1">Site</label>
+    <label class="block text-sm font-medium mb-1">Site/Unit</label>
     <select name="site_id" id="site_id"
             class="searchable-select w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
-      <option value="">-- All Sites --</option>
+      <option value="">-- All Sites/Units --</option>
       {% for s in sites %}
         <option value="{{ s.id }}" data-entity="{{ s.entity_code }}"
                 {% if assignment and assignment.site_id == s.id and assignment.entity_id == s.entity_id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>

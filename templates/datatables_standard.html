@@ -1,4 +1,5 @@
 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.dataTables.min.css">
 <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
 <style>
   .dataTables_wrapper .dataTables_length select { border: 1px solid #aaa; border-radius: 3px; padding: 4px; background-color: transparent; }
@@ -54,21 +55,177 @@
     margin-right: 4px !important;
     color: #ef4444 !important;
   }
+  .dt-button.buttons-excel {
+    background: #10b981 !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 0.375rem !important;
+    padding: 0.35rem 0.75rem !important;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+    margin-left: 10px !important;
+    transition: background-color 0.15s !important;
+  }
+  .dt-button.buttons-excel:hover {
+    background: #059669 !important;
+  }
 </style>
 <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
 <script>
 $(document).ready(function() {
+    var bulkMsg = sessionStorage.getItem('bulkDeleteMsg');
+    if (bulkMsg) {
+        sessionStorage.removeItem('bulkDeleteMsg');
+        try {
+            bulkMsg = JSON.parse(bulkMsg);
+            var isError = bulkMsg.type === 'error';
+            var cssClass = isError ? 'bg-red-50 text-red-800 border-red-200' : 'bg-green-50 text-green-800 border-green-200';
+            var formattedText = bulkMsg.text.replace(/\n/g, '<br>');
+            
+            var $msgContainer = $('main > .mb-6.space-y-2');
+            if ($msgContainer.length === 0) {
+                $msgContainer = $('<div class="mb-6 space-y-2"></div>');
+                $('main').prepend($msgContainer);
+            }
+            $msgContainer.append('<div class="rounded-md px-4 py-3 text-sm border shadow-sm ' + cssClass + '">' + formattedText + '</div>');
+        } catch(e) {}
+    }
+
+
     $('.datatable-standard').each(function() {
         var $table = $(this);
-        $table.find('thead tr').clone(true).addClass('filters').appendTo($table.find('thead'));
+        
+        // --- Bulk Delete & Select Checkboxes Prep ---
+        var hasDeleteForms = $table.find('form[action*="delete"]').length > 0;
+        
+        if (hasDeleteForms) {
+            $table.find('tbody tr').each(function() {
+                var $row = $(this);
+                var tdCount = $row.children('td').length;
+                if (tdCount === 1 && $row.children('td').attr('colspan')) {
+                    $row.children('td').attr('colspan', parseInt($row.children('td').attr('colspan')) + 1);
+                } else {
+                    var deleteForm = $row.find('form[action*="delete"]');
+                    var deleteUrl = deleteForm.length ? deleteForm.attr('action') : '';
+                    $row.prepend('<td class="text-center align-middle" style="width:30px; max-width:30px;"><input type="checkbox" class="row-checkbox h-4 w-4 rounded border-gray-300" ' + (deleteUrl ? 'data-url="' + deleteUrl + '"' : 'disabled') + '></td>');
+                }
+            });
+            $table.find('thead tr').prepend('<th class="text-center no-sort" style="width:30px; max-width:30px; padding-left:10px;"><input type="checkbox" class="select-all-checkbox h-4 w-4 rounded border-gray-300"></th>');
+        }
+        // ---------------------------------------------
 
-        var table = $table.DataTable({
+        $table.find('thead tr').eq(0).clone(true).addClass('filters').appendTo($table.find('thead'));
+
+        var dtOptions = {
+            dom: '<"flex flex-wrap items-center justify-between gap-3 mb-3"<"flex items-center gap-2"lB>f>rt<"flex flex-wrap items-center justify-between gap-3 mt-3"ip>',
+            buttons: [
+                {
+                    extend: 'excelHtml5',
+                    text: 'Export Excel',
+                    title: document.title,
+                    exportOptions: {
+                        columns: ':visible:not(.no-sort)' // export visible columns except checkboxes/actions
+                    }
+                }
+            ],
             orderCellsTop: true,
             fixedHeader: true,
             pageLength: 50,
             lengthMenu: [ [10, 25, 50, 100, -1], [10, 25, 50, 100, "All"] ],
             initComplete: function () {
                 var api = this.api();
+                
+                // --- Bulk Delete Toolbar Setup ---
+                if (hasDeleteForms) {
+                    var $toolbar = $('<div class="bulk-toolbar mb-3 hidden flex justify-end"></div>');
+                    var $btn = $('<button type="button" class="bg-red-500 text-white font-medium px-4 py-2 rounded-md text-sm hover:bg-red-600 shadow-sm transition-all duration-150 flex items-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg> Bulk Delete (<span class="sel-cnt">0</span>)</button>');
+                    $toolbar.append($btn);
+                    $(api.table().node()).before($toolbar);
+
+                    var updateBulkDelete = function() {
+                        var cnt = api.rows().nodes().to$().find('.row-checkbox:checked').length;
+                        if (cnt > 0) {
+                            $toolbar.removeClass('hidden');
+                            $btn.find('.sel-cnt').text(cnt);
+                        } else {
+                            $toolbar.addClass('hidden');
+                            $table.find('.select-all-checkbox').prop('checked', false);
+                        }
+                    };
+
+                    $table.on('change', '.row-checkbox', function() {
+                        updateBulkDelete();
+                    });
+
+                    $table.on('change', '.select-all-checkbox', function() {
+                        var isChecked = $(this).is(':checked');
+                        api.rows({page:'current'}).nodes().to$().find('.row-checkbox:not(:disabled)').prop('checked', isChecked);
+                        updateBulkDelete();
+                    });
+
+                    api.on('draw', function() {
+                        $table.find('.select-all-checkbox').prop('checked', false);
+                    });
+
+                    $btn.on('click', async function() {
+                        var $checked = api.rows().nodes().to$().find('.row-checkbox:checked');
+                        if (!$checked.length) return;
+                        if (!confirm('Are you sure you want to delete ' + $checked.length + ' selected item(s)?')) return;
+
+                        $btn.prop('disabled', true).addClass('opacity-50 cursor-not-allowed').html('Deleting...');
+                        var urls = [];
+                        $checked.each(function() {
+                            if ($(this).data('url')) urls.push($(this).data('url'));
+                        });
+
+                        // Endpoints that recognize this header respond with JSON
+                        // ({success, message}) naming the specific record instead of
+                        // redirecting, so failures (e.g. "in use elsewhere") can be
+                        // reported individually rather than as a wall of stacked
+                        // flash banners after the page reloads.
+                        var succeeded = [];
+                        var failed = [];
+                        for (var i = 0; i < urls.length; i++) {
+                            try {
+                                var res = await fetch(urls[i], {
+                                    method: 'POST',
+                                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                                });
+                                var data = null;
+                                try { data = await res.json(); } catch (e) { /* endpoint doesn't support JSON yet */ }
+                                if (data) {
+                                    (data.success ? succeeded : failed).push(data.message);
+                                } else if (res.ok) {
+                                    succeeded.push(null);
+                                } else {
+                                    failed.push(null);
+                                }
+                            } catch (e) {
+                                failed.push(null);
+                            }
+                        }
+
+                        var summary = succeeded.length + ' of ' + urls.length + ' item(s) deleted successfully.';
+                        var namedFailures = failed.filter(function(m) { return m; });
+                        var isError = false;
+                        if (failed.length) {
+                            isError = true;
+                            summary += '\n\n' + failed.length + ' item(s) could not be deleted';
+                            summary += namedFailures.length ? ':\n- ' + namedFailures.join('\n- ') : '.';
+                        }
+                        
+                        sessionStorage.setItem('bulkDeleteMsg', JSON.stringify({
+                            type: isError ? 'error' : 'success',
+                            text: summary
+                        }));
+                        window.location.reload();
+                    });
+                }
+                // ---------------------------------
+
                 api.columns().eq(0).each(function (colIdx) {
                     var cell = $('.filters th', $table).eq($(api.column(colIdx).header()).index());
                     var title = $(cell).text().trim();
@@ -114,8 +271,15 @@ $(document).ready(function() {
                             .draw();
                     });
                 });
-            },
-        });
+            }
+        };
+
+        if (hasDeleteForms) {
+            dtOptions.columnDefs = [ { targets: 0, orderable: false, searchable: false } ];
+            dtOptions.order = [[1, 'asc']];
+        }
+
+        var table = $table.DataTable(dtOptions);
     });
 });
 </script>

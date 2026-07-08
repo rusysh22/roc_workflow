@@ -179,12 +179,13 @@
 
 <style>
   @media print {
-    @page { size: portrait; margin: 8mm; }
+    @page { size: landscape; margin: 8mm; }
+    html, body { height: auto !important; overflow: visible !important; }
     body { background-color: white !important; }
     .no-print { display: none !important; }
-    main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+    main { padding: 0 !important; margin: 0 !important; max-width: none !important; overflow: visible !important; height: auto !important; }
     .print-sheet { border: none !important; box-shadow: none !important; }
-    .print-sheet table { font-size: 7px !important; }
+    .print-sheet table { font-size: 8px !important; }
     .print-sheet th, .print-sheet td { padding: 2px !important; }
   }
 </style>
