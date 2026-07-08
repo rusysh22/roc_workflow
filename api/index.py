@@ -1,10 +1,14 @@
 import os
 import sys
+import json
+import urllib.parse
+import urllib.request
 from datetime import datetime
 
 import psycopg2
 from markupsafe import Markup, escape
 from psycopg2.extras import Json
+from werkzeug.security import generate_password_hash
 from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,6 +21,11 @@ from lib.money import format_tier_label  # noqa: E402
 app = Flask(__name__, template_folder="../templates", static_folder="../static")
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
+# --- MS SSO Config ---
+MS_CLIENT_ID = os.environ.get("MS_CLIENT_ID", "")
+MS_CLIENT_SECRET = os.environ.get("MS_CLIENT_SECRET", "")
+MS_TENANT_ID = os.environ.get("MS_TENANT_ID", "common")
+
 # --- Auto-migrate DB Schema ---
 try:
     conn = get_db_connection()
@@ -25,6 +34,11 @@ try:
         cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS creator_role_id INTEGER REFERENCES roles(id);")
         cur.execute("ALTER TABLE ses_entries ADD COLUMN IF NOT EXISTS approver_role_id INTEGER REFERENCES roles(id);")
         cur.execute("ALTER TABLE workpaper_rows ADD COLUMN IF NOT EXISTS comment TEXT;")
+
+        # RBAC: super_admin (full access) / manager (full access minus user management)
+        # / portal_user (read-only Workpapers + Assignments only). Existing accounts
+        # default to super_admin so no one already logged in gets locked out.
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'super_admin';")
 
         # Version & Status columns
         cur.execute("ALTER TABLE work_units ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';")
@@ -47,6 +61,21 @@ try:
         cur.execute("ALTER TABLE workpaper_version_log ADD COLUMN IF NOT EXISTS snapshot JSONB;")
         cur.execute("ALTER TABLE workpaper_version_log ADD COLUMN IF NOT EXISTS changes JSONB;")
 
+        # Assignment changes queue up here first; a version bump sweeps them
+        # into that version's `changes` and clears the queue.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS workpaper_pending_changes (
+                id SERIAL PRIMARY KEY,
+                work_unit_id INTEGER REFERENCES work_units(id) ON DELETE CASCADE,
+                section TEXT NOT NULL,
+                field TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                author TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tier_entities (
                 tier_id INTEGER REFERENCES amount_tiers(id) ON DELETE CASCADE,
@@ -67,7 +96,16 @@ try:
 except Exception as e:
     print(f"Auto-migrate failed: {e}")
 
-PUBLIC_ENDPOINTS = {"login", "static"}
+PUBLIC_ENDPOINTS = {"login", "static", "login_microsoft", "login_microsoft_callback"}
+
+# RBAC: super_admin has full access. manager has full access except managing
+# user accounts. portal_user is read-only, limited to Workpapers + Assignments
+# (mutating routes below simply aren't in this set, so they're blocked outright).
+PORTAL_USER_ALLOWED_ENDPOINTS = {
+    "workpapers", "workpaper_detail", "workpaper_version_snapshot",
+    "assignments", "logout", "change_password", "profile",
+}
+MANAGER_RESTRICTED_ENDPOINTS = {"users_list", "new_user", "edit_user", "delete_user"}
 
 
 def _safe_next(path):
@@ -75,6 +113,10 @@ def _safe_next(path):
     if path and path.startswith("/") and not path.startswith("//"):
         return path
     return None
+
+
+def _landing_page_for_role(role):
+    return url_for("workpapers") if role == "portal_user" else url_for("home")
 
 
 @app.before_request
@@ -85,6 +127,14 @@ def require_login():
         return redirect(url_for("login", next=request.path))
     if session.get("must_change_password") and request.endpoint != "change_password":
         return redirect(url_for("change_password"))
+
+    role = session.get("role", "super_admin")
+    if role == "portal_user" and request.endpoint not in PORTAL_USER_ALLOWED_ENDPOINTS:
+        flash("Your account has read-only access to Workpapers and Assignments only.", "error")
+        return redirect(url_for("workpapers"))
+    if role == "manager" and request.endpoint in MANAGER_RESTRICTED_ENDPOINTS:
+        flash("Only Super Admins can manage user accounts.", "error")
+        return redirect(url_for("home"))
     return None
 
 
@@ -106,23 +156,110 @@ def login():
             conn.close()
 
         if not verify_password(user, password):
-            flash("Email atau password salah.", "error")
+            flash("Incorrect email or password.", "error")
             return render_template("login.html", email=email, next=next_path)
 
         session.clear()
         session["user_id"] = user["id"]
         session["full_name"] = user["full_name"]
         session["email"] = user["email"]
+        session["role"] = user["role"]
         session["must_change_password"] = user["must_change_password"]
-        return redirect(_safe_next(next_path) or url_for("home"))
+        return redirect(_safe_next(next_path) or _landing_page_for_role(user["role"]))
 
     return render_template("login.html", email="", next=request.args.get("next", ""))
+
+
+@app.route("/login/microsoft")
+def login_microsoft():
+    if not MS_CLIENT_ID:
+        flash("SSO has not been configured by the Administrator.", "error")
+        return redirect(url_for("login"))
+    
+    auth_url = f"https://login.microsoftonline.com/{MS_TENANT_ID}/oauth2/v2.0/authorize"
+    redirect_uri = url_for("login_microsoft_callback", _external=True)
+    
+    params = {
+        "client_id": MS_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": redirect_uri,
+        "response_mode": "query",
+        "scope": "openid email profile",
+    }
+    
+    url = auth_url + "?" + urllib.parse.urlencode(params)
+    return redirect(url)
+
+@app.route("/login/microsoft/callback")
+def login_microsoft_callback():
+    code = request.args.get("code")
+    if not code:
+        flash("Failed to log in with Microsoft.", "error")
+        return redirect(url_for("login"))
+    
+    token_url = f"https://login.microsoftonline.com/{MS_TENANT_ID}/oauth2/v2.0/token"
+    redirect_uri = url_for("login_microsoft_callback", _external=True)
+    
+    data = urllib.parse.urlencode({
+        "client_id": MS_CLIENT_ID,
+        "client_secret": MS_CLIENT_SECRET,
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code"
+    }).encode("utf-8")
+    
+    try:
+        req = urllib.request.Request(token_url, data=data)
+        with urllib.request.urlopen(req) as response:
+            token_response = json.loads(response.read())
+            
+        access_token = token_response.get("access_token")
+        
+        # Get user info
+        graph_url = "https://graph.microsoft.com/v1.0/me"
+        req_me = urllib.request.Request(graph_url)
+        req_me.add_header("Authorization", f"Bearer {access_token}")
+        
+        with urllib.request.urlopen(req_me) as response_me:
+            user_info = json.loads(response_me.read())
+            
+        email = user_info.get("mail") or user_info.get("userPrincipalName")
+        
+        if not email:
+            flash("Could not read the email profile from the Microsoft account.", "error")
+            return redirect(url_for("login"))
+            
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                user = get_user_by_email(cur, email)
+        finally:
+            conn.close()
+            
+        if not user:
+            flash(f"SSO account ({email}) is not registered in the system. Contact your Admin.", "error")
+            return redirect(url_for("login"))
+            
+        session.clear()
+        session["user_id"] = user["id"]
+        session["full_name"] = user["full_name"]
+        session["email"] = user["email"]
+        session["role"] = user["role"]
+        session["must_change_password"] = user["must_change_password"]
+
+        # Optionally handle 'next' state if passed via auth flow, omitted here for simplicity
+        return redirect(_landing_page_for_role(user["role"]))
+        
+    except Exception as e:
+        print("SSO Error:", str(e))
+        flash("Failed to verify SSO login.", "error")
+        return redirect(url_for("login"))
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
     session.clear()
-    flash("Anda telah logout.", "success")
+    flash("You have been logged out.", "success")
     return redirect(url_for("login"))
 
 
@@ -139,21 +276,181 @@ def change_password():
                 user = get_user_by_email(cur, session["email"])
 
             if not verify_password(user, current_password):
-                flash("Password saat ini salah.", "error")
+                flash("Current password is incorrect.", "error")
             elif len(new_password) < 8:
-                flash("Password baru minimal 8 karakter.", "error")
+                flash("New password must be at least 8 characters.", "error")
             elif new_password != confirm_password:
-                flash("Konfirmasi password tidak cocok.", "error")
+                flash("Password confirmation does not match.", "error")
             else:
                 set_password(conn, user["id"], new_password)
                 conn.commit()
                 session["must_change_password"] = False
-                flash("Password berhasil diubah.", "success")
-                return redirect(url_for("home"))
+                flash("Password changed successfully.", "success")
+                return redirect(_landing_page_for_role(session.get("role")))
         finally:
             conn.close()
 
     return render_template("change_password.html", forced=session.get("must_change_password", False))
+
+
+# ---------- Users (Master Data, Super Admin only) ----------
+
+USER_ROLES = ["super_admin", "manager", "portal_user"]
+USER_ROLE_LABELS = {"super_admin": "Super Admin", "manager": "Manager", "portal_user": "Portal User"}
+
+
+@app.route("/users")
+def users_list():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, full_name, role, is_active, must_change_password, created_at "
+                "FROM users ORDER BY full_name"
+            )
+            users = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template("users.html", users=users, role_labels=USER_ROLE_LABELS)
+
+
+@app.route("/users/new", methods=["GET", "POST"])
+def new_user():
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        email = request.form.get("email", "").strip()
+        role = request.form.get("role") or "portal_user"
+        password = request.form.get("password", "")
+
+        errors = []
+        if not full_name:
+            errors.append("Full name is required.")
+        if not email:
+            errors.append("Email is required.")
+        if role not in USER_ROLES:
+            errors.append("Invalid role.")
+        if len(password) < 8:
+            errors.append("Password must be at least 8 characters.")
+
+        if not errors:
+            conn = get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO users (email, full_name, password_hash, role, must_change_password)
+                           VALUES (%s, %s, %s, %s, TRUE)""",
+                        (email, full_name, generate_password_hash(password), role),
+                    )
+                    log_change(
+                        conn, session["full_name"], "CREATE", entity_code=None,
+                        field_changed="User", old_value=None,
+                        new_value=f"{full_name} ({USER_ROLE_LABELS.get(role, role)})",
+                    )
+                    conn.commit()
+                    flash("User created successfully.", "success")
+                    return redirect(url_for("users_list"))
+            except psycopg2.errors.UniqueViolation:
+                conn.rollback()
+                flash("A user with this email already exists.", "error")
+            finally:
+                conn.close()
+        else:
+            for message in errors:
+                flash(message, "error")
+
+    return render_template("user_form.html", mode="create", user=None, roles=USER_ROLES, role_labels=USER_ROLE_LABELS)
+
+
+@app.route("/users/<int:user_id>/edit", methods=["GET", "POST"])
+def edit_user(user_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            user = cur.fetchone()
+            if not user:
+                flash("User not found.", "error")
+                return redirect(url_for("users_list"))
+
+            if request.method == "POST":
+                full_name = request.form.get("full_name", "").strip()
+                email = request.form.get("email", "").strip()
+                role = request.form.get("role") or user["role"]
+                new_password = request.form.get("password", "")
+                is_active = "is_active" in request.form
+
+                errors = []
+                if not full_name:
+                    errors.append("Full name is required.")
+                if not email:
+                    errors.append("Email is required.")
+                if role not in USER_ROLES:
+                    errors.append("Invalid role.")
+                if new_password and len(new_password) < 8:
+                    errors.append("Password must be at least 8 characters.")
+                if user_id == session.get("user_id") and not is_active:
+                    errors.append("You cannot deactivate your own account.")
+                if user_id == session.get("user_id") and role != "super_admin" and user["role"] == "super_admin":
+                    errors.append("You cannot remove your own Super Admin role.")
+
+                if not errors:
+                    try:
+                        if new_password:
+                            cur.execute(
+                                """UPDATE users SET full_name=%s, email=%s, role=%s, is_active=%s,
+                                   password_hash=%s, must_change_password=TRUE, updated_at=NOW() WHERE id=%s""",
+                                (full_name, email, role, is_active, generate_password_hash(new_password), user_id),
+                            )
+                        else:
+                            cur.execute(
+                                """UPDATE users SET full_name=%s, email=%s, role=%s, is_active=%s,
+                                   updated_at=NOW() WHERE id=%s""",
+                                (full_name, email, role, is_active, user_id),
+                            )
+                        if role != user["role"]:
+                            log_change(
+                                conn, session["full_name"], "UPDATE", entity_code=None,
+                                field_changed="User role",
+                                old_value=USER_ROLE_LABELS.get(user["role"], user["role"]),
+                                new_value=USER_ROLE_LABELS.get(role, role),
+                            )
+                        conn.commit()
+                        flash("User updated successfully.", "success")
+                        return redirect(url_for("users_list"))
+                    except psycopg2.errors.UniqueViolation:
+                        conn.rollback()
+                        flash("A user with this email already exists.", "error")
+                else:
+                    for message in errors:
+                        flash(message, "error")
+    finally:
+        conn.close()
+
+    return render_template("user_form.html", mode="edit", user=user, roles=USER_ROLES, role_labels=USER_ROLE_LABELS)
+
+
+@app.route("/users/<int:user_id>/delete", methods=["POST"])
+def delete_user(user_id):
+    if user_id == session.get("user_id"):
+        flash("You cannot delete your own account.", "error")
+        return redirect(url_for("users_list"))
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT full_name FROM users WHERE id = %s", (user_id,))
+            user = cur.fetchone()
+            if user:
+                cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+                log_change(
+                    conn, session["full_name"], "DELETE", entity_code=None,
+                    field_changed="User", old_value=user["full_name"], new_value=None,
+                )
+                conn.commit()
+                flash("User deleted.", "success")
+    finally:
+        conn.close()
+    return redirect(url_for("users_list"))
 
 ENTITY_BADGE_COLORS = {
     "IMU": "blue",
@@ -203,7 +500,7 @@ def get_lookup_data(cur):
 
     cur.execute(
         """
-        SELECT s.id, s.name, e.code AS entity_code
+        SELECT s.id, s.name, e.code AS entity_code, e.id AS entity_id
         FROM sites s
         JOIN entity_sites es ON es.site_id = s.id
         JOIN entities e ON e.id = es.entity_id
@@ -242,6 +539,60 @@ def get_employee_assignments_map(cur):
             "is_active": row["is_active"],
         })
     return by_email
+
+
+def get_affected_work_units(cur, entity_id, role_id):
+    """Workpapers for this entity whose authority rows, buyer/creator rows, or
+    SES entries reference this role -- i.e. workpapers whose displayed names
+    would change if this role's assignments change."""
+    if not entity_id or not role_id:
+        return []
+    cur.execute(
+        """
+        SELECT DISTINCT wu.id, wu.code
+        FROM work_units wu
+        WHERE wu.entity_id = %s
+          AND (
+            EXISTS (SELECT 1 FROM workpaper_rows wr WHERE wr.work_unit_id = wu.id AND wr.role_id = %s)
+            OR EXISTS (
+                SELECT 1 FROM ses_entries se
+                WHERE se.work_unit_id = wu.id AND (se.creator_role_id = %s OR se.approver_role_id = %s)
+            )
+          )
+        ORDER BY wu.code
+        """,
+        (entity_id, role_id, role_id, role_id),
+    )
+    return cur.fetchall()
+
+
+def consume_pending_changes(cur, work_unit_id):
+    """Fetch and clear all queued Assignment-driven changes for a workpaper,
+    returning them as plain dicts to be folded into the version being bumped."""
+    cur.execute(
+        """SELECT section, field, old_value, new_value, author, created_at
+           FROM workpaper_pending_changes WHERE work_unit_id = %s ORDER BY id""",
+        (work_unit_id,),
+    )
+    rows = cur.fetchall()
+    cur.execute("DELETE FROM workpaper_pending_changes WHERE work_unit_id = %s", (work_unit_id,))
+    return [
+        {"section": r["section"], "field": r["field"], "old": r["old_value"], "new": r["new_value"]}
+        for r in rows
+    ]
+
+
+def queue_pending_changes(cur, entity_id, role_id, section, field, old_value, new_value, author):
+    """Record a change against every workpaper this assignment affects. These
+    sit in the queue until that workpaper's next version bump, at which point
+    they're folded into that version's `changes` and cleared."""
+    for unit in get_affected_work_units(cur, entity_id, role_id):
+        cur.execute(
+            """INSERT INTO workpaper_pending_changes
+               (work_unit_id, section, field, old_value, new_value, author)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (unit["id"], section, field, old_value, new_value, author),
+        )
 
 
 def get_ho_jakarta_site_id(cur):
@@ -334,6 +685,7 @@ def assignments():
         with conn.cursor() as cur:
             query = """
                 SELECT ua.id, ua.full_name, ua.email, ua.is_active,
+                       ua.entity_id,
                        e.code AS entity_code, e.name AS entity_name,
                        s.name AS site_name,
                        r.id AS role_id, r.name AS role_name, r.is_centralized
@@ -353,6 +705,10 @@ def assignments():
             query += " ORDER BY e.code, r.name, ua.full_name"
             cur.execute(query, params)
             rows = cur.fetchall()
+
+            for row in rows:
+                affected = get_affected_work_units(cur, row["entity_id"], row["role_id"])
+                row["affected_workpapers"] = [u["code"] for u in affected]
 
             entities, _sites, roles = get_lookup_data(cur)
             cur.execute("SELECT DISTINCT email, full_name FROM user_assignments ORDER BY full_name")
@@ -490,7 +846,7 @@ def new_amount_tier():
                         
 
                     conn.commit()
-                    flash("Limit berhasil ditambahkan.", "success")
+                    flash("Limit added successfully.", "success")
                     return redirect(url_for("amount_tiers_list"))
                 except Exception as e:
                     conn.rollback()
@@ -529,7 +885,7 @@ def edit_amount_tier(tier_id):
                         cur.execute("INSERT INTO tier_sites (tier_id, site_id) VALUES (%s, %s)", (tier_id, sid))
                         
                     conn.commit()
-                    flash("Limit berhasil diperbarui.", "success")
+                    flash("Limit updated successfully.", "success")
                     return redirect(url_for("amount_tiers_list"))
                 except Exception as e:
                     conn.rollback()
@@ -558,9 +914,9 @@ def delete_amount_tier(tier_id):
         with conn.cursor() as cur:
             cur.execute("DELETE FROM amount_tiers WHERE id = %s", (tier_id,))
             conn.commit()
-            flash("Limit berhasil dihapus.", "success")
+            flash("Limit deleted successfully.", "success")
     except Exception as e:
-        flash(f"Gagal menghapus: {e}", "error")
+        flash(f"Failed to delete: {e}", "error")
     finally:
         conn.close()
     return redirect(url_for("amount_tiers_list"))
@@ -685,6 +1041,12 @@ def new_assignment():
                         field_changed=None, old_value=None,
                         new_value=f"{data['full_name']} - {role_name}",
                     )
+                    queue_pending_changes(
+                        cur, int(data["entity_id"]), int(data["role_id"]),
+                        section="Assignment", field=role_name,
+                        old_value=None, new_value=f"{data['full_name']} assigned",
+                        author=session["full_name"],
+                    )
                     conn.commit()
                 except psycopg2.errors.UniqueViolation:
                     conn.rollback()
@@ -785,6 +1147,26 @@ def edit_assignment(assignment_id):
                             old_value=str(old_value) if old_value is not None else None,
                             new_value=str(new_value) if new_value is not None else None,
                         )
+
+                    if diffs:
+                        diff_summary = "; ".join(f"{f}: {o or '-'} -> {n or '-'}" for f, o, n in diffs)
+                        # Queue against the new (entity, role) -- where the assignment now lives.
+                        queue_pending_changes(
+                            cur, int(data["entity_id"]), int(data["role_id"]),
+                            section="Assignment", field=new_role_name or "Assignment",
+                            old_value=existing["full_name"], new_value=f"{data['full_name']} ({diff_summary})",
+                            author=session["full_name"],
+                        )
+                        # If entity or role changed, the OLD workpapers this assignment
+                        # used to affect need to know it no longer applies there too.
+                        if existing["entity_id"] != int(data["entity_id"]) or existing["role_id"] != int(data["role_id"]):
+                            queue_pending_changes(
+                                cur, existing["entity_id"], existing["role_id"],
+                                section="Assignment", field=existing["role_name"] or "Assignment",
+                                old_value=f"{existing['full_name']} assigned", new_value="Reassigned elsewhere",
+                                author=session["full_name"],
+                            )
+
                     conn.commit()
                 except psycopg2.errors.UniqueViolation:
                     conn.rollback()
@@ -823,7 +1205,7 @@ def reassign_assignment(assignment_id):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT ua.full_name, e.code AS entity_code, r.name AS role_name
+                SELECT ua.full_name, ua.entity_id, ua.role_id, e.code AS entity_code, r.name AS role_name
                 FROM user_assignments ua
                 JOIN entities e ON e.id = ua.entity_id
                 JOIN roles r ON r.id = ua.role_id
@@ -835,7 +1217,7 @@ def reassign_assignment(assignment_id):
             if not old_assignment:
                 flash("Assignment not found.", "error")
                 return redirect(url_for("assignments"))
-            
+
             try:
                 cur.execute(
                     "UPDATE user_assignments SET full_name = %s, email = %s WHERE id = %s",
@@ -843,8 +1225,14 @@ def reassign_assignment(assignment_id):
                 )
                 log_change(
                     conn, session["full_name"], "UPDATE", entity_code=old_assignment["entity_code"],
-                    field_changed=f"Reassign {old_assignment['role_name']}", 
+                    field_changed=f"Reassign {old_assignment['role_name']}",
                     old_value=old_assignment["full_name"], new_value=full_name
+                )
+                queue_pending_changes(
+                    cur, old_assignment["entity_id"], old_assignment["role_id"],
+                    section="Assignment", field=old_assignment["role_name"] or "Assignment",
+                    old_value=old_assignment["full_name"], new_value=full_name,
+                    author=session["full_name"],
                 )
                 conn.commit()
                 flash("Assignment successfully reassigned.", "success")
@@ -863,7 +1251,7 @@ def delete_assignment(assignment_id):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT ua.full_name, e.code AS entity_code, r.name AS role_name
+                SELECT ua.full_name, ua.entity_id, ua.role_id, e.code AS entity_code, r.name AS role_name
                 FROM user_assignments ua
                 JOIN entities e ON e.id = ua.entity_id
                 JOIN roles r ON r.id = ua.role_id
@@ -883,6 +1271,12 @@ def delete_assignment(assignment_id):
                 old_value=f"{existing['full_name']} - {existing['role_name']}",
                 new_value=None,
             )
+            queue_pending_changes(
+                cur, existing["entity_id"], existing["role_id"],
+                section="Assignment", field=existing["role_name"] or "Assignment",
+                old_value=f"{existing['full_name']} assigned", new_value="Removed",
+                author=session["full_name"],
+            )
             conn.commit()
     finally:
         conn.close()
@@ -891,7 +1285,7 @@ def delete_assignment(assignment_id):
     return redirect(url_for("assignments"))
 
 
-# ---------- Kertas Kerja (Workpapers) ----------
+# ---------- Workpapers ----------
 
 @app.route("/workpapers")
 def workpapers():
@@ -903,10 +1297,19 @@ def workpapers():
                 SELECT wu.id, wu.code, wu.project_name, wu.site_id,
                        wu.status, wu.version_major, wu.version_minor, wu.version_patch,
                        e.code AS entity_code, e.name AS entity_name,
-                       s.name AS site_name
+                       s.name AS site_name,
+                       lvl.author AS last_modified_by, lvl.created_at AS last_modified_at,
+                       COALESCE(pc.n, 0) AS pending_count
                 FROM work_units wu
                 JOIN entities e ON e.id = wu.entity_id
                 LEFT JOIN sites s ON s.id = wu.site_id
+                LEFT JOIN LATERAL (
+                    SELECT author, created_at FROM workpaper_version_log
+                    WHERE work_unit_id = wu.id ORDER BY id DESC LIMIT 1
+                ) lvl ON true
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS n FROM workpaper_pending_changes WHERE work_unit_id = wu.id
+                ) pc ON true
                 ORDER BY e.code, wu.sort_order, wu.code
                 """
             )
@@ -945,7 +1348,7 @@ def workpaper_detail(code):
             )
             unit = cur.fetchone()
             if not unit:
-                flash("Kertas kerja tidak ditemukan.", "error")
+                flash("Workpaper not found.", "error")
                 return redirect(url_for("workpapers"))
 
             cur.execute("""
@@ -1057,6 +1460,13 @@ def workpaper_detail(code):
                 (unit["id"],)
             )
             version_log = cur.fetchall()
+
+            cur.execute(
+                """SELECT section, field, old_value, new_value, author, created_at
+                   FROM workpaper_pending_changes WHERE work_unit_id=%s ORDER BY id""",
+                (unit["id"],)
+            )
+            pending_changes = cur.fetchall()
     finally:
         conn.close()
 
@@ -1069,6 +1479,7 @@ def workpaper_detail(code):
         unit=unit, bands=bands, authority_rows=authority_rows,
         buyer_row=buyer_row, creator_row=creator_row,
         matrix=matrix, ses=ses, all_units=all_units, version_log=version_log,
+        pending_changes=pending_changes,
     )
 
 
@@ -1247,12 +1658,12 @@ def diff_workpaper_snapshots(old_snapshot, new_snapshot):
 
     if (old_snapshot.get("buyer_name") or None) != (new_snapshot.get("buyer_name") or None):
         changes.append({
-            "section": "Buyer", "field": "Nama",
+            "section": "Buyer", "field": "Name",
             "old": old_snapshot.get("buyer_name"), "new": new_snapshot.get("buyer_name"),
         })
     if (old_snapshot.get("creator_name") or None) != (new_snapshot.get("creator_name") or None):
         changes.append({
-            "section": "PR Creator", "field": "Nama",
+            "section": "PR Creator", "field": "Name",
             "old": old_snapshot.get("creator_name"), "new": new_snapshot.get("creator_name"),
         })
 
@@ -1267,32 +1678,32 @@ def diff_workpaper_snapshots(old_snapshot, new_snapshot):
             _band_short_label(old_bands[i])
             for i, chk in enumerate(old_r.get("checks", [])) if chk and i < len(old_bands)
         ]
-        old_val_str = "Baris ada"
+        old_val_str = "Row existed"
         if active_bands:
-            old_val_str += f" (otoritas: {', '.join(active_bands)})"
-        changes.append({"section": "Approval Matrix", "field": label, "old": old_val_str, "new": "Baris dihapus"})
-        
+            old_val_str += f" (authority: {', '.join(active_bands)})"
+        changes.append({"section": "Approval Matrix", "field": label, "old": old_val_str, "new": "Row deleted"})
+
     for label in new_rows.keys() - old_rows.keys():
         new_r = new_rows[label]
         active_bands = [
             _band_short_label(new_bands[i])
             for i, chk in enumerate(new_r.get("checks", [])) if chk and i < len(new_bands)
         ]
-        new_val_str = "Baris ditambahkan"
+        new_val_str = "Row added"
         if active_bands:
-            new_val_str += f" (otoritas: {', '.join(active_bands)})"
-        changes.append({"section": "Approval Matrix", "field": label, "old": "Baris belum ada", "new": new_val_str})
+            new_val_str += f" (authority: {', '.join(active_bands)})"
+        changes.append({"section": "Approval Matrix", "field": label, "old": "Row did not exist", "new": new_val_str})
 
     for label in old_rows.keys() & new_rows.keys():
         old_r, new_r = old_rows[label], new_rows[label]
         if (old_r.get("position") or None) != (new_r.get("position") or None):
             changes.append({
-                "section": "Approval Matrix", "field": f"{label} - Posisi",
+                "section": "Approval Matrix", "field": f"{label} - Position",
                 "old": old_r.get("position"), "new": new_r.get("position"),
             })
         if (old_r.get("comment") or None) != (new_r.get("comment") or None):
             changes.append({
-                "section": "Approval Matrix", "field": f"{label} - Komentar",
+                "section": "Approval Matrix", "field": f"{label} - Comment",
                 "old": old_r.get("comment"), "new": new_r.get("comment"),
             })
         old_checks = old_r.get("checks", [])
@@ -1469,7 +1880,7 @@ def new_workpaper():
                     )
 
                     conn.commit()
-                    flash("Kertas kerja berhasil dibuat.", "success")
+                    flash("Workpaper created successfully.", "success")
                     return redirect(url_for("workpaper_detail", code=code))
                 except Exception as e:
                     conn.rollback()
@@ -1489,6 +1900,12 @@ def edit_workpaper(code):
             unit = cur.fetchone()
             if not unit:
                 return redirect(url_for("workpapers"))
+
+            # Auto-change status to editing when edit button is clicked (GET)
+            if request.method == "GET" and unit.get("status") in ("draft", "published"):
+                cur.execute("UPDATE work_units SET status = 'editing' WHERE id = %s", (unit["id"],))
+                conn.commit()
+                unit["status"] = 'editing'
 
             entities, sites, roles = get_lookup_data(cur)
             
@@ -1555,7 +1972,7 @@ def edit_workpaper(code):
                     new_snapshot = build_workpaper_snapshot(cur, unit["id"])
                     content_diffs = diff_workpaper_snapshots(old_snapshot, new_snapshot)
                     all_changes = [
-                        {"section": "Info Dasar", "field": field, "old": old_value, "new": new_value}
+                        {"section": "Basic Info", "field": field, "old": old_value, "new": new_value}
                         for field, old_value, new_value in diffs
                     ] + content_diffs
 
@@ -1570,11 +1987,11 @@ def edit_workpaper(code):
                     else:
                         log_change(
                             conn, session["full_name"], "UPDATE", entity_code=new_entity_code,
-                            field_changed="Kertas Kerja",
+                            field_changed="Workpaper",
                             old_value=None,
                             new_value=(
-                                f"{new_code} - {len(content_diffs)} perubahan pada matrix/SES/buyer/creator"
-                                if content_diffs else f"{new_code} - tidak ada perubahan konten"
+                                f"{new_code} - {len(content_diffs)} change(s) to matrix/SES/buyer/creator"
+                                if content_diffs else f"{new_code} - no content changes"
                             ),
                         )
 
@@ -1587,6 +2004,9 @@ def edit_workpaper(code):
                             "UPDATE work_units SET version_major=%s, version_minor=%s, version_patch=%s WHERE id=%s",
                             (maj, minn, pat, unit["id"])
                         )
+                        # Assignment-driven changes queued since the last bump ride
+                        # along with this bump; a plain save (no bump) leaves them queued.
+                        all_changes = all_changes + consume_pending_changes(cur, unit["id"])
                     else:
                         new_ver = f"{unit['version_major']}.{unit['version_minor']}.{unit['version_patch']}"
 
@@ -1601,7 +2021,7 @@ def edit_workpaper(code):
 
                     conn.commit()
                     flash(
-                        "Kertas kerja berhasil diperbarui." + (f" Versi dinaikkan ke v{new_ver}." if is_real_bump else ""),
+                        "Workpaper updated successfully." + (f" Version bumped to v{new_ver}." if is_real_bump else ""),
                         "success",
                     )
                     return redirect(url_for("workpaper_detail", code=new_code))
@@ -1665,7 +2085,7 @@ def delete_workpaper(unit_id):
             )
             existing = cur.fetchone()
             if not existing:
-                flash("Kertas kerja tidak ditemukan.", "error")
+                flash("Workpaper not found.", "error")
                 return redirect(url_for("workpapers"))
 
             cur.execute("DELETE FROM work_units WHERE id = %s", (unit_id,))
@@ -1676,10 +2096,10 @@ def delete_workpaper(unit_id):
                 new_value=None,
             )
             conn.commit()
-            flash("Kertas kerja berhasil dihapus.", "success")
+            flash("Workpaper deleted successfully.", "success")
     except Exception as e:
         conn.rollback()
-        flash("Gagal menghapus kertas kerja.", "error")
+        flash("Failed to delete workpaper.", "error")
     finally:
         conn.close()
     return redirect(url_for("workpapers"))
@@ -1718,10 +2138,12 @@ def workpaper_version_bump(unit_id):
                 (maj, minn, pat, unit_id)
             )
             snapshot = build_workpaper_snapshot(cur, unit_id)
+            pending_changes = consume_pending_changes(cur, unit_id)
             cur.execute(
-                """INSERT INTO workpaper_version_log (work_unit_id, version, bump_type, comment, author, snapshot)
-                   VALUES (%s, %s, %s, %s, %s, %s)""",
-                (unit_id, new_ver, bump_type, comment, session.get("full_name", "System"), Json(snapshot))
+                """INSERT INTO workpaper_version_log (work_unit_id, version, bump_type, comment, author, snapshot, changes)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (unit_id, new_ver, bump_type, comment, session.get("full_name", "System"),
+                 Json(snapshot), Json(pending_changes)),
             )
             log_change(
                 conn, session.get("full_name", "System"), "UPDATE", entity_code=unit["entity_code"],
@@ -1760,7 +2182,7 @@ def workpaper_version_snapshot(code, log_id):
         conn.close()
 
     if not log or not log["snapshot"]:
-        flash("Snapshot untuk versi ini tidak tersedia (dibuat sebelum fitur ini ada).", "error")
+        flash("Snapshot not available for this version (created before this feature existed).", "error")
         return redirect(url_for("workpaper_detail", code=code))
 
     return render_template("workpaper_version_snapshot.html", code=code, log=log, snapshot=log["snapshot"])

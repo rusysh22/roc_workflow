@@ -66,7 +66,7 @@
       <option value="">-- All Sites --</option>
       {% for s in sites %}
         <option value="{{ s.id }}" data-entity="{{ s.entity_code }}"
-                {% if assignment and assignment.site_id == s.id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
+                {% if assignment and assignment.site_id == s.id and assignment.entity_id == s.entity_id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
       {% endfor %}
     </select>
     <p id="site_note" class="text-xs mt-1 hidden">

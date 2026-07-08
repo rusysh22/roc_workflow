@@ -76,7 +76,8 @@
                   data-full-name="{{ a.full_name }}" data-email="{{ a.email }}"
                   data-entity-code="{{ a.entity_code }}" data-entity-name="{{ a.entity_name }}"
                   data-site-name="{{ a.site_name or 'All Site/Unit Applied' }}" data-role-name="{{ a.role_name }}"
-                  data-is-active="{{ '1' if a.is_active else '0' }}">View</button>
+                  data-is-active="{{ '1' if a.is_active else '0' }}"
+                  data-workpapers="{{ a.affected_workpapers | join(',') }}">View</button>
           
           <button type="button" class="text-purple-600 font-medium hover:text-purple-800 ml-3 reassign-assignment-btn"
                   data-id="{{ a.id }}" data-entity-code="{{ a.entity_code }}" 
@@ -134,6 +135,10 @@
         <div>
           <dt class="text-xs uppercase tracking-wide text-gray-400">Status</dt>
           <dd id="view_status"></dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase tracking-wide text-gray-400">Affects Workpapers</dt>
+          <dd id="view_workpapers" class="flex flex-wrap gap-1.5"></dd>
         </div>
       </dl>
       <div class="flex justify-end pt-5">
@@ -234,6 +239,19 @@ $(document).ready(function() {
         ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">Active</span>'
         : '<span class="inline-block px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">Inactive</span>'
     );
+
+    var $wp = $('#view_workpapers');
+    var codes = (data.workpapers || '').split(',').filter(function(c) { return c; });
+    if (codes.length === 0) {
+      $wp.html('<span class="text-gray-400 italic text-xs">No workpaper currently references this role for this entity</span>');
+    } else {
+      $wp.html(codes.map(function(code) {
+        return '<a href="/workpapers/' + encodeURIComponent(code) + '" ' +
+               'class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-700 hover:bg-sky-200">' +
+               code + '</a>';
+      }).join(''));
+    }
+
     $modal.removeClass('hidden');
     $('body').addClass('overflow-hidden');
   }
@@ -253,6 +271,7 @@ $(document).ready(function() {
       siteName: $btn.data('site-name'),
       roleName: $btn.data('role-name'),
       isActive: $btn.data('is-active') == 1,
+      workpapers: $btn.data('workpapers'),
     });
   });
 

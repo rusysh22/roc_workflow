@@ -14,11 +14,11 @@
     {% endif %}
   </div>
 {% endmacro %}
-{% block title %}{{ snapshot.code }} — v{{ log.version }} (Historis){% endblock %}
+{% block title %}{{ snapshot.code }} — v{{ log.version }} (Historical){% endblock %}
 {% block content %}
 
 <div class="flex items-center justify-between mb-3 no-print">
-  <a href="{{ url_for('workpaper_detail', code=code) }}" class="text-sm text-gray-500 hover:text-gray-800">&larr; Kembali ke versi terkini</a>
+  <a href="{{ url_for('workpaper_detail', code=code) }}" class="text-sm text-gray-500 hover:text-gray-800">&larr; Back to current version</a>
   <button onclick="window.print()" class="text-sm border border-gray-300 rounded-md px-3 py-1 hover:bg-gray-100">Print / PDF</button>
 </div>
 
@@ -27,13 +27,13 @@
     <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
   </svg>
   <div class="text-sm text-amber-800">
-    <span class="font-semibold">Snapshot Historis &mdash; v{{ log.version }}</span>
+    <span class="font-semibold">Historical Snapshot &mdash; v{{ log.version }}</span>
     <span class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold ml-1
       {{ 'bg-red-100 text-red-700' if log.bump_type == 'major' else
          ('bg-blue-100 text-blue-700' if log.bump_type == 'minor' else
           'bg-gray-100 text-gray-600') }}">{{ log.bump_type }}</span>
     <span class="block text-xs text-amber-700 mt-0.5">
-      {{ log.comment or '(tidak ada komentar)' }} &mdash; oleh {{ log.author }} pada
+      {{ log.comment or '(no comment)' }} &mdash; by {{ log.author }} on
       {{ log.created_at.strftime('%d %b %Y %H:%M') if log.created_at else '' }}
     </span>
   </div>
@@ -42,16 +42,16 @@
 {% if log.changes %}
 <div class="mb-5 no-print border border-gray-200 rounded-lg bg-white overflow-hidden">
   <div class="px-4 py-2.5 text-sm font-semibold text-gray-700 border-b border-gray-100">
-    Perubahan pada versi ini ({{ log.changes|length }})
+    Changes in this version ({{ log.changes|length }})
   </div>
   <div class="overflow-x-auto">
     <table class="w-full text-xs border-collapse">
       <thead>
         <tr class="bg-gray-50 text-gray-600">
-          <th class="px-3 py-2 text-left w-32">Bagian</th>
+          <th class="px-3 py-2 text-left w-32">Section</th>
           <th class="px-3 py-2 text-left w-48">Field</th>
-          <th class="px-3 py-2 text-left">Nilai Lama</th>
-          <th class="px-3 py-2 text-left">Nilai Baru</th>
+          <th class="px-3 py-2 text-left">Old Value</th>
+          <th class="px-3 py-2 text-left">New Value</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-100">
@@ -74,11 +74,11 @@
   <!-- Header -->
   <div class="grid grid-cols-2 border-b border-gray-300 text-sm">
     <div class="px-4 py-2 border-r border-gray-300">
-      <span class="text-[11px] uppercase tracking-wide text-gray-500">Nama Entitas / Company Name</span>
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Company Name</span>
       <div class="font-semibold text-gray-900">{{ snapshot.entity_name }}</div>
     </div>
     <div class="px-4 py-2">
-      <span class="text-[11px] uppercase tracking-wide text-gray-500">Proyek / Project</span>
+      <span class="text-[11px] uppercase tracking-wide text-gray-500">Project</span>
       <div class="font-semibold text-gray-900">{{ snapshot.site_name or snapshot.project_name }}</div>
     </div>
   </div>
@@ -91,8 +91,8 @@
     <table class="w-full text-xs border-collapse">
       <thead>
         <tr class="bg-gray-100 text-gray-700">
-          <th class="border border-gray-300 px-2 py-1 text-left w-40">Level / Tingkat</th>
-          <th class="border border-gray-300 px-2 py-1 text-left">Name / Nama</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-40">Level</th>
+          <th class="border border-gray-300 px-2 py-1 text-left">Name</th>
           <th class="border border-gray-300 px-2 py-1 text-left w-52">Position</th>
           {% for b in snapshot.bands %}
             <th class="border border-gray-300 px-1 py-1 align-bottom h-52 w-16 bg-white">
@@ -104,7 +104,7 @@
               </div>
             </th>
           {% endfor %}
-          <th class="border border-gray-300 px-2 py-1 text-left w-48">Comment / Komentar</th>
+          <th class="border border-gray-300 px-2 py-1 text-left w-48">Comment</th>
         </tr>
       </thead>
       <tbody>
@@ -152,7 +152,7 @@
     <table class="w-full text-xs border-collapse">
       <thead>
         <tr class="bg-gray-100 text-gray-700">
-          <th class="border border-gray-300 px-2 py-1 text-left">Nominal / Threshold</th>
+          <th class="border border-gray-300 px-2 py-1 text-left">Threshold</th>
           <th class="border border-gray-300 px-2 py-1 text-left w-1/3">SES Creator</th>
           <th class="border border-gray-300 px-2 py-1 text-left w-1/3">SES Approver</th>
         </tr>
@@ -179,11 +179,13 @@
 
 <style>
   @media print {
-    @page { size: landscape; margin: 10mm; }
+    @page { size: portrait; margin: 8mm; }
     body { background-color: white !important; }
     .no-print { display: none !important; }
-    nav { display: none !important; }
+    main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
     .print-sheet { border: none !important; box-shadow: none !important; }
+    .print-sheet table { font-size: 7px !important; }
+    .print-sheet th, .print-sheet td { padding: 2px !important; }
   }
 </style>
 {% endblock %}

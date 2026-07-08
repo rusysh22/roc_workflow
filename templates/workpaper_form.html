@@ -14,7 +14,7 @@
     {% endif %}
   </div>
 {% endmacro %}
-{% block title %}{{ 'Buat' if mode == 'create' else 'Edit' }} Kertas Kerja{% endblock %}
+{% block title %}{{ 'Create' if mode == 'create' else 'Edit' }} Workpaper{% endblock %}
 {% block content %}
 
 
@@ -36,21 +36,21 @@
 </style>
 
 <div class="mb-4">
-  <a href="{{ url_for('workpapers') }}" class="text-sm text-gray-500 hover:text-gray-900">&larr; Kembali ke daftar</a>
+  <a href="{{ url_for('workpapers') }}" class="text-sm text-gray-500 hover:text-gray-900">&larr; Back to list</a>
 </div>
 
 <div class="flex items-center justify-between mb-6">
   <div>
-    <h1 class="text-xl font-semibold">{{ 'Buat Kertas Kerja Baru' if mode == 'create' else 'Edit Kertas Kerja' }}</h1>
-    <p class="text-sm text-gray-500 mt-1">Pilih entitas, site, dan atur peran (Role) yang berwenang pada masing-masing limit/tier.</p>
+    <h1 class="text-xl font-semibold">{{ 'Create New Workpaper' if mode == 'create' else 'Edit Workpaper' }}</h1>
+    <p class="text-sm text-gray-500 mt-1">Select the entity, site, and set which Role is authorized for each limit/tier.</p>
   </div>
 </div>
 
 <form id="workpaperMainForm" method="post" action="{{ url_for('new_workpaper') if mode == 'create' else url_for('edit_workpaper', code=unit.code) }}" class="space-y-6">
   
-  <!-- Info Dasar -->
+  <!-- Basic Info -->
   <div class="bg-white border border-gray-200 rounded-lg p-5">
-    <h2 class="text-base font-semibold mb-4 border-b pb-2">Informasi Dasar</h2>
+    <h2 class="text-base font-semibold mb-4 border-b pb-2">Basic Information</h2>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <div>
         <label class="block text-sm font-medium mb-1">Entity <span class="text-red-500">*</span></label>
@@ -61,7 +61,7 @@
           {% endfor %}
         </select>
         <p class="text-xs text-amber-600 mt-1" id="entity_hint">
-          ⚠️ Pilih Entity terlebih dahulu agar pilihan Role menampilkan karyawan yang sesuai.
+          ⚠️ Select Entity first so the Role options show the right employees.
         </p>
       </div>
       <div>
@@ -69,25 +69,25 @@
         <select name="site_id" id="site_id" required class="searchable-select w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
           <option value="">-- Select Site --</option>
           {% for s in sites %}
-            <option value="{{ s.id }}" data-entity="{{ s.entity_code }}" {% if unit and unit.site_id == s.id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
+            <option value="{{ s.id }}" data-entity="{{ s.entity_code }}" {% if unit and unit.site_id == s.id and unit.entity_id == s.entity_id %}selected{% endif %}>{{ s.entity_code }} - {{ s.name }}</option>
           {% endfor %}
         </select>
         <p class="text-xs text-amber-600 mt-1" id="site_hint">
-          ⚠️ Pilih Site agar sistem bisa memetakan karyawan yang tepat.
+          ⚠️ Select Site so the system can map the correct employees.
         </p>
       </div>
       <div>
-        <label class="block text-sm font-medium mb-1">Kode Dokumen</label>
-        <input type="text" name="code" value="{{ unit.code if unit else '' }}" required placeholder="Contoh: IMU-HO"
+        <label class="block text-sm font-medium mb-1">Document Code</label>
+        <input type="text" name="code" value="{{ unit.code if unit else '' }}" required placeholder="e.g. IMU-HO"
                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
       </div>
       <div>
-        <label class="block text-sm font-medium mb-1">Nama Proyek (Fallback)</label>
-        <input type="text" name="project_name" value="{{ unit.project_name if unit else '' }}" required placeholder="Contoh: HEAD OFFICE - JAKARTA"
+        <label class="block text-sm font-medium mb-1">Project Name (Fallback)</label>
+        <input type="text" name="project_name" value="{{ unit.project_name if unit else '' }}" required placeholder="e.g. HEAD OFFICE - JAKARTA"
                class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
       </div>
       <div class="sm:col-span-2">
-        <label class="block text-sm font-medium mb-2">Status Workpaper</label>
+        <label class="block text-sm font-medium mb-2">Workpaper Status</label>
         {% set current_status = unit.status if unit else 'draft' %}
         <div class="flex items-center gap-3 flex-wrap">
           {% for s_val, s_label, s_color, s_bg in [
@@ -109,12 +109,12 @@
     </div>
   </div>
 
-  <!-- Matriks Otorisasi -->
+  <!-- Authorization Matrix -->
   <div class="bg-white border border-gray-200 rounded-lg p-5 overflow-x-auto">
-    <h2 class="text-base font-semibold mb-2">Matriks Otorisasi (Purchase Request)</h2>
+    <h2 class="text-base font-semibold mb-2">Authorization Matrix (Purchase Request)</h2>
     <p class="text-xs text-gray-500 mb-4">
-      Pilih <b>Role</b> yang bertugas sebagai approver. Centang kotak limit nilai yang wajib disetujui oleh role tersebut.
-      Seret ikon <span class="inline-block align-middle text-gray-400">⠿</span> untuk mengubah urutan approval (mis. menyisipkan approver susulan).
+      Select the <b>Role</b> that acts as approver. Check the box for each value limit that role must approve.
+      Drag the <span class="inline-block align-middle text-gray-400">⠿</span> icon to reorder approvals (e.g. to insert a follow-up approver).
     </p>
 
     <table class="min-w-full text-sm border-collapse" id="matrixTable">
@@ -122,8 +122,8 @@
         <tr class="bg-gray-50 border-b border-t">
           <th class="px-2 py-2 w-8"></th>
           <th class="px-3 py-2 text-left font-medium w-64">Role</th>
-          <th class="px-3 py-2 text-left font-medium w-48">Posisi (Label Khusus)</th>
-          <th class="px-3 py-2 text-left font-medium w-48">Komentar</th>
+          <th class="px-3 py-2 text-left font-medium w-48">Position (Custom Label)</th>
+          <th class="px-3 py-2 text-left font-medium w-48">Comment</th>
           {% for b in bands %}
             <th class="px-1 py-2 align-bottom h-52 w-16 border-x border-gray-200 band-col-{{ b.id }}">
               <div class="w-full flex justify-center pb-2">
@@ -146,27 +146,27 @@
         {% if authority_rows %}
           {% for r in authority_rows %}
             <tr class="border-b matrix-row">
-              <td class="p-2 text-center drag-handle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600" draggable="true" title="Seret untuk mengubah urutan">
+              <td class="p-2 text-center drag-handle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600" draggable="true" title="Drag to reorder">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mx-auto pointer-events-none" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M7 4a1 1 0 11-2 0 1 1 0 012 0zM7 10a1 1 0 11-2 0 1 1 0 012 0zM7 16a1 1 0 11-2 0 1 1 0 012 0zM15 4a1 1 0 11-2 0 1 1 0 012 0zM15 10a1 1 0 11-2 0 1 1 0 012 0zM15 16a1 1 0 11-2 0 1 1 0 012 0z"/>
                 </svg>
               </td>
               <td class="p-2">
                 <select name="row_role_id[]" required class="role-select searchable-select w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none">
-                  <option value="">-- Pilih Role --</option>
+                  <option value="">-- Select Role --</option>
                   {% for role in roles %}
                   <option value="{{ role.id }}" {% if r.role_id == role.id %}selected{% endif %}
-                          data-members="{{ role_assignments.get(role.id, ['(Belum ada employee yang di-assign)']) | join(', ') }}">
+                          data-members="{{ role_assignments.get(role.id, ['(No employee assigned yet)']) | join(', ') }}">
                     {{ role.name }}
                   </option>
                   {% endfor %}
                 </select>
               </td>
               <td class="p-2">
-                <input type="text" name="row_position[]" value="{{ r.position or '' }}" placeholder="Label opsional" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
+                <input type="text" name="row_position[]" value="{{ r.position or '' }}" placeholder="Optional label" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
               </td>
               <td class="p-2">
-                <input type="text" name="row_comment[]" value="{{ r.comment or '' }}" placeholder="Komentar opsional" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
+                <input type="text" name="row_comment[]" value="{{ r.comment or '' }}" placeholder="Optional comment" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
               </td>
               {% set outer_loop_index = loop.index0 %}
               {% for b in bands %}
@@ -182,24 +182,24 @@
           {% endfor %}
         {% else %}
           <tr class="border-b matrix-row">
-            <td class="p-2 text-center drag-handle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600" draggable="true" title="Seret untuk mengubah urutan">
+            <td class="p-2 text-center drag-handle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600" draggable="true" title="Drag to reorder">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mx-auto pointer-events-none" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M7 4a1 1 0 11-2 0 1 1 0 012 0zM7 10a1 1 0 11-2 0 1 1 0 012 0zM7 16a1 1 0 11-2 0 1 1 0 012 0zM15 4a1 1 0 11-2 0 1 1 0 012 0zM15 10a1 1 0 11-2 0 1 1 0 012 0zM15 16a1 1 0 11-2 0 1 1 0 012 0z"/>
               </svg>
             </td>
             <td class="p-2">
               <select name="row_role_id[]" required class="role-select searchable-select w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none">
-                <option value="">-- Pilih Role --</option>
+                <option value="">-- Select Role --</option>
                 {% for role in roles %}
                   <option value="{{ role.id }}">{{ role.name }}</option>
                 {% endfor %}
               </select>
             </td>
             <td class="p-2">
-              <input type="text" name="row_position[]" placeholder="Label opsional" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
+              <input type="text" name="row_position[]" placeholder="Optional label" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
             </td>
             <td class="p-2">
-              <input type="text" name="row_comment[]" placeholder="Komentar opsional" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
+              <input type="text" name="row_comment[]" placeholder="Optional comment" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm">
             </td>
             {% for b in bands %}
               <td class="p-2 text-center align-middle band-col-{{ b.id }}">
@@ -213,7 +213,7 @@
         {% endif %}
       </tbody>
     </table>
-    <button type="button" id="addRowBtn" class="mt-3 text-sm text-gray-900 font-medium hover:underline">+ Tambah Baris Approver</button>
+    <button type="button" id="addRowBtn" class="mt-3 text-sm text-gray-900 font-medium hover:underline">+ Add Approver Row</button>
   </div>
 
   <!-- Buyer & PR Creator -->
@@ -221,9 +221,9 @@
     <h2 class="text-base font-semibold mb-4 border-b pb-2">Buyer & PR Creator</h2>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <div>
-        <label class="block text-sm font-medium mb-1">Role Buyer</label>
+        <label class="block text-sm font-medium mb-1">Buyer Role</label>
         <select name="buyer_role_id" required class="searchable-select w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none">
-          <option value="">-- Pilih Role --</option>
+          <option value="">-- Select Role --</option>
           {% for role in roles %}
             <option value="{{ role.id }}" {% if buyer_row and buyer_row.role_id == role.id %}selected{% endif %}>
               {{ role.name }}
@@ -232,9 +232,9 @@
         </select>
       </div>
       <div>
-        <label class="block text-sm font-medium mb-1">Role PR Creator</label>
+        <label class="block text-sm font-medium mb-1">PR Creator Role</label>
         <select name="creator_role_id" required class="searchable-select w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none">
-          <option value="">-- Pilih Role --</option>
+          <option value="">-- Select Role --</option>
           {% for role in roles %}
             <option value="{{ role.id }}" {% if creator_row and creator_row.role_id == role.id %}selected{% endif %}>
               {{ role.name }}
@@ -251,7 +251,7 @@
     <table class="min-w-full text-sm border-collapse">
       <thead>
         <tr class="bg-gray-50 border-b border-t">
-          <th class="px-3 py-2 text-left font-medium">Nominal Limit</th>
+          <th class="px-3 py-2 text-left font-medium">Amount Limit</th>
           <th class="px-3 py-2 text-left font-medium">Role SES Creator</th>
           <th class="px-3 py-2 text-left font-medium">Role SES Approver</th>
         </tr>
@@ -266,7 +266,7 @@
             </td>
             <td class="p-2">
               <select name="ses_creator_{{ b.id }}" required class="searchable-select w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none">
-                <option value="">-- Pilih Role --</option>
+                <option value="">-- Select Role --</option>
                 {% for role in roles %}
                   <option value="{{ role.id }}" {% if s and s.creator_role_id == role.id %}selected{% endif %}>
                     {{ role.name }}
@@ -276,7 +276,7 @@
             </td>
             <td class="p-2">
               <select name="ses_approver_{{ b.id }}" required class="searchable-select w-full border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none">
-                <option value="">-- Pilih Role --</option>
+                <option value="">-- Select Role --</option>
                 {% for role in roles %}
                   <option value="{{ role.id }}" {% if s and s.approver_role_id == role.id %}selected{% endif %}>
                     {{ role.name }}
@@ -292,9 +292,9 @@
 
   <div class="flex items-center gap-4 pt-4 border-t border-gray-200">
     <button type="submit" class="bg-gray-900 text-white font-medium px-6 py-2 rounded-md hover:bg-gray-800">
-      Simpan Kertas Kerja
+      Save Workpaper
     </button>
-    <a href="{{ url_for('workpapers') }}" class="text-sm text-gray-500 hover:text-gray-900">Batal</a>
+    <a href="{{ url_for('workpapers') }}" class="text-sm text-gray-500 hover:text-gray-900">Cancel</a>
   </div>
 
   {% if mode == 'edit' %}
@@ -309,15 +309,15 @@
   <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
   <div class="absolute inset-0 flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
-      <h2 class="text-lg font-bold text-gray-900 mb-2">Naikkan Versi?</h2>
+      <h2 class="text-lg font-bold text-gray-900 mb-2">Bump the Version?</h2>
       <p class="text-sm text-gray-500 mb-5">
-        Tandai perubahan ini sebagai versi baru (saat ini v{{ unit.version_major }}.{{ unit.version_minor }}.{{ unit.version_patch }}) dengan catatan perubahan?
+        Mark this change as a new version (currently v{{ unit.version_major }}.{{ unit.version_minor }}.{{ unit.version_patch }}) with a change note?
       </p>
       <button type="button" id="bumpConfirmYesBtn" class="w-full bg-gray-900 text-white text-sm font-semibold py-2.5 rounded-lg hover:bg-gray-700 mb-3">
-        Ya, Bump Version
+        Yes, Bump Version
       </button>
       <button type="button" id="bumpConfirmNoBtn" class="text-xs text-gray-400 hover:text-gray-600 underline">
-        Tidak, simpan saja
+        No, just save
       </button>
     </div>
   </div>
@@ -355,15 +355,15 @@
       </div>
 
       <div class="mb-5">
-        <label class="block text-sm font-semibold text-gray-700 mb-1">Catatan Perubahan <span class="text-red-500">*</span></label>
-        <textarea id="bumpCommentTextarea" rows="3" placeholder="Jelaskan apa yang berubah pada versi ini…"
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Change Note <span class="text-red-500">*</span></label>
+        <textarea id="bumpCommentTextarea" rows="3" placeholder="Describe what changed in this version…"
                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-800 resize-none"></textarea>
       </div>
 
       <div class="flex justify-end gap-3">
         <button type="button" id="bumpDetailsCancelBtn" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 rounded-lg">Cancel</button>
         <button type="button" id="bumpDetailsConfirmBtn" class="px-5 py-2 bg-gray-900 hover:bg-gray-700 text-white text-sm font-semibold rounded-lg shadow">
-          Bump Version &amp; Simpan
+          Bump Version &amp; Save
         </button>
       </div>
     </div>
@@ -379,7 +379,7 @@
 
   function filterSites() {
     var entityOpt = entitySelect.options[entitySelect.selectedIndex];
-    var entityCode = entityOpt && entityOpt.value ? entityOpt.text.split(' - ')[0] : '';
+    var entityCode = entityOpt && entityOpt.value ? entityOpt.text.split(' - ')[0].trim() : '';
     siteOptions.forEach(function (opt) {
       if (!opt.value) { opt.hidden = false; return; }
       opt.hidden = !!entityCode && opt.dataset.entity !== entityCode;
@@ -534,7 +534,7 @@
           btn.closest('tr').remove();
           updateRowNames();
         } else {
-          alert('Minimal harus ada 1 baris.');
+          alert('At least 1 row is required.');
         }
       };
     });
@@ -625,7 +625,7 @@
       html += '</ul></div>';
       return html;
     } else {
-      return '<div class="mt-1.5 p-2 bg-gray-50 border border-gray-100 rounded-md shadow-sm text-xs text-gray-400 italic">Belum ada employee yang di-assign untuk Entity/Site ini</div>';
+      return '<div class="mt-1.5 p-2 bg-gray-50 border border-gray-100 rounded-md shadow-sm text-xs text-gray-400 italic">No employee assigned yet for this Entity/Site</div>';
     }
   }
 
@@ -714,7 +714,7 @@
     var chosen = document.querySelector('input[name="bump_type_choice"]:checked');
     var comment = document.getElementById('bumpCommentTextarea').value.trim();
     if (!comment) {
-      alert('Catatan perubahan wajib diisi.');
+      alert('A change note is required.');
       return;
     }
     document.getElementById('bump_type_hidden').value = chosen ? chosen.value : '';
@@ -733,14 +733,14 @@
       e.preventDefault();
       document.getElementById('entity_hint').style.display = '';
       document.getElementById('entity_id').closest('div').scrollIntoView({ behavior: 'smooth' });
-      alert('Entity wajib diisi terlebih dahulu.');
+      alert('Entity is required.');
       return false;
     }
     if (!siteVal) {
       e.preventDefault();
       document.getElementById('site_hint').style.display = '';
       document.getElementById('site_id').closest('div').scrollIntoView({ behavior: 'smooth' });
-      alert('Site wajib diisi terlebih dahulu.');
+      alert('Site is required.');
       return false;
     }
     {% if mode == 'edit' %}

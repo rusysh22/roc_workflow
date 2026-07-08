@@ -1,5 +1,5 @@
 """Render an amount_tiers row (min_usd/max_usd) as the bilingual band label
-used throughout the kertas kerja views, e.g. "US$1k – < US$5k or
+used throughout the workpaper views, e.g. "US$1k – < US$5k or
 Rp.16,000,000 – < Rp.80,000,000", computed from each entity's own exchange
 rate rather than stored as static text.
 """

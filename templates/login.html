@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -93,6 +93,7 @@
       border: 2px solid hsla(0, 0%, 100%, .5);
       padding-inline: 1.1rem;
       border-radius: 4rem;
+      overflow: hidden;
     }
     .login__box:focus-within { border-color: hsla(0, 0%, 100%, .9); }
 
@@ -107,6 +108,15 @@
       padding-block: .9rem;
     }
     .login__input::placeholder { color: hsla(0, 0%, 100%, .75); }
+    
+    /* Chrome Autofill fix */
+    .login__input:-webkit-autofill,
+    .login__input:-webkit-autofill:hover, 
+    .login__input:-webkit-autofill:focus, 
+    .login__input:-webkit-autofill:active {
+      transition: background-color 5000s ease-in-out 0s;
+      -webkit-text-fill-color: var(--white-color) !important;
+    }
 
     .login__button {
       width: 100%;
@@ -162,6 +172,17 @@
       </div>
 
       <button type="submit" class="login__button">Login</button>
+
+      <div style="text-align: center; margin: 1.25rem 0; font-size: 0.8rem; color: hsla(0, 0%, 100%, .7); display: flex; align-items: center; gap: 0.5rem;">
+        <div style="flex: 1; height: 1px; background: hsla(0, 0%, 100%, .2);"></div>
+        Or
+        <div style="flex: 1; height: 1px; background: hsla(0, 0%, 100%, .2);"></div>
+      </div>
+      
+      <a href="{{ url_for('login_microsoft') }}" class="login__button" style="display: flex; align-items: center; justify-content: center; gap: 0.6rem; text-decoration: none; background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.4); color: white;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 21 21"><path fill="#f3f3f3" d="M10 0H0v10h10V0zM21 0H11v10h10V0zM10 11H0v10h10V11zm11 0H11v10h10V11z"/></svg>
+        Sign in with Microsoft
+      </a>
     </form>
   </div>
 </body>

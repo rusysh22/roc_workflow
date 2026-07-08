@@ -43,7 +43,8 @@ def build_export_workbook(cur):
         """
         SELECT e.code AS entity_code, s.name
         FROM sites s
-        JOIN entities e ON e.id = s.entity_id
+        JOIN entity_sites es ON es.site_id = s.id
+        JOIN entities e ON e.id = es.entity_id
         ORDER BY e.code, s.name
         """
     )

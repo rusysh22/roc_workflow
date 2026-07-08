@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if mode == 'edit' else 'Add' }} User{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">{{ 'Edit User' if mode == 'edit' else 'Add User' }}</h1>
+
+<form method="post" class="space-y-4 max-w-lg"
+      action="{{ url_for('edit_user', user_id=user.id) if mode == 'edit' else url_for('new_user') }}">
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Full Name</label>
+    <input type="text" name="full_name" required value="{{ user.full_name if user else '' }}"
+           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Email</label>
+    <input type="email" name="email" required value="{{ user.email if user else '' }}"
+           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium mb-1">Role</label>
+    <select name="role" required class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+      {% for r in roles %}
+        <option value="{{ r }}" {% if (user and user.role == r) or (not user and r == 'portal_user') %}selected{% endif %}>
+          {{ role_labels.get(r, r) }}
+        </option>
+      {% endfor %}
+    </select>
+    <p class="text-xs text-gray-500 mt-1">
+      Super Admin: full access. Manager: full access except managing users. Portal User: read-only Workpapers &amp; Assignments.
+    </p>
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium mb-1">
+      {{ 'New Password (leave blank to keep current)' if mode == 'edit' else 'Password' }}
+    </label>
+    <input type="password" name="password" {% if mode != 'edit' %}required{% endif %} minlength="8"
+           class="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-gray-900">
+    <p class="text-xs text-gray-500 mt-1">Minimum 8 characters. The user will be asked to change it on next login.</p>
+  </div>
+
+  {% if mode == 'edit' %}
+  <div class="flex items-center gap-2">
+    <input type="checkbox" name="is_active" id="is_active"
+           {% if user.is_active %}checked{% endif %}
+           class="rounded border-gray-300">
+    <label for="is_active" class="text-sm">Active</label>
+    {% if user.id == session.get('user_id') %}
+      <span class="text-xs text-gray-400">(you cannot deactivate your own account)</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="flex gap-3 pt-2">
+    <button type="submit" class="bg-gray-900 text-white text-sm px-4 py-2 rounded-md hover:bg-gray-800">
+      {{ 'Save Changes' if mode == 'edit' else 'Add User' }}
+    </button>
+    <a href="{{ url_for('users_list') }}" class="text-sm text-gray-500 px-4 py-2 hover:text-gray-800">Cancel</a>
+  </div>
+</form>
+{% endblock %}
