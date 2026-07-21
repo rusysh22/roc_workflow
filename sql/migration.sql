@@ -27,7 +27,7 @@ CREATE TABLE user_assignments (
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE(email, entity_id, role_id)
+  UNIQUE(email, entity_id, role_id, site_id)
 );
 
 CREATE TABLE approval_levels (

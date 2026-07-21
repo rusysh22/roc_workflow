@@ -90,7 +90,26 @@ try:
                 PRIMARY KEY (tier_id, site_id)
             )
         """)
-        
+
+        # Assignments used to be unique on (email, entity, role) only, which blocked
+        # the same person/entity/role combo at a different site. Site is now part
+        # of the uniqueness key.
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'user_assignments_email_entity_id_role_id_site_id_key'
+                ) THEN
+                    ALTER TABLE user_assignments
+                        DROP CONSTRAINT IF EXISTS user_assignments_email_entity_id_role_id_key;
+                    ALTER TABLE user_assignments
+                        ADD CONSTRAINT user_assignments_email_entity_id_role_id_site_id_key
+                        UNIQUE (email, entity_id, role_id, site_id);
+                END IF;
+            END $$;
+        """)
+
         conn.commit()
     conn.close()
 except Exception as e:
@@ -1073,7 +1092,7 @@ def new_assignment():
                     conn.commit()
                 except psycopg2.errors.UniqueViolation:
                     conn.rollback()
-                    flash("An assignment with this email, entity, and role already exists.", "error")
+                    flash("An assignment with this email, entity, role, and site already exists.", "error")
                     return render_template(
                         "assignment_form.html", mode="create", assignment=_sticky_assignment(data),
                         entities=entities, sites=sites, roles=roles, employees_list=employees_list,
@@ -1193,7 +1212,7 @@ def edit_assignment(assignment_id):
                     conn.commit()
                 except psycopg2.errors.UniqueViolation:
                     conn.rollback()
-                    flash("An assignment with this email, entity, and role already exists.", "error")
+                    flash("An assignment with this email, entity, role, and site already exists.", "error")
                     return render_template(
                         "assignment_form.html", mode="edit",
                         assignment=_sticky_assignment(data, {"id": assignment_id}),
